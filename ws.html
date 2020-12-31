@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <title>KVM over IP</title>
+        <script type="text/javascript">
+            var ws = null; // WebSocket
+            var statusText = null;
+            var keepAliveTimer = null;
+            var keepAliveCount = 0;
+
+            class KeyState {
+                constructor() {
+                    this.altKey = false;
+                    this.ctrlKey = false;
+                    this.metaKey = false;
+                    this.shiftKey = false;
+                    this.keys = [];
+                }
+
+                Clear() {
+                    this.altKey = false;
+                    this.ctrlKey = false;
+                    this.metaKey = false;
+                    this.shiftKey = false;
+                    this.keys = [];
+                }
+
+                getKeyCode(code) {
+                    var map = {
+                        KeyA: 4,
+                        KeyB: 5,
+                        KeyC: 6,
+                        KeyD: 7,
+                        KeyE: 8,
+                        KeyF: 9,
+                        KeyG: 10,
+                        KeyH: 11,
+                        KeyI: 12,
+                        KeyJ: 13,
+                        KeyK: 14,
+                        KeyL: 15,
+                        KeyM: 16,
+                        KeyN: 17,
+                        KeyO: 18,
+                        KeyP: 19,
+                        KeyQ: 20,
+                        KeyR: 21,
+                        KeyS: 22,
+                        KeyT: 23,
+                        KeyU: 24,
+                        KeyV: 25,
+                        KeyW: 26,
+                        KeyX: 27,
+                        KeyY: 28,
+                        KeyZ: 29,
+                        Digit1: 30,
+                        Digit2: 31,
+                        Digit3: 32,
+                        Digit4: 33,
+                        Digit5: 34,
+                        Digit6: 35,
+                        Digit7: 36,
+                        Digit8: 37,
+                        Digit9: 38,
+                        Digit0: 39,
+                        Enter: 40,
+                        Escape: 41,
+                        Backspace: 42,
+                        Tab: 43,
+                        Space: 44,
+                        Minus: 45,
+                        Equal: 46,
+                        BracketLeft: 47,
+                        BracketRight: 48,
+                        Backslash: 49,
+                        Semicolon: 51,
+                        Quote: 52,
+                        Backquote: 53,
+                        Comma: 54,
+                        Period: 55,
+                        Slash: 56,
+                        CapsLock: 57,
+                        F1: 58,
+                        F2: 59,
+                        F3: 60,
+                        F4: 61,
+                        F5: 62,
+                        F6: 63,
+                        F7: 64,
+                        F8: 65,
+                        F9: 66,
+                        F10: 67,
+                        F11: 68,
+                        F12: 69,
+                        // PrintScreen: 70,
+                        ScrollLock: 71,
+                        Pause: 72,
+                        Insert: 73,
+                        Home: 74,
+                        PageUp: 75,
+                        Delete: 76,
+                        End: 77,
+                        PageDown: 78,
+                        ArrowRight: 79,
+                        ArrowLeft: 80,
+                        ArrowDown: 81,
+                        ArrowUp: 82,
+                    }
+
+                    if (code in map) {
+                        return map[code]
+                    }
+                    console.log("Unknown keycode: " + code)
+                    return null
+                }
+
+                KeyDown(code) {
+                    if (code == "AltLeft") {
+                        this.altKey = true;
+                        return;
+                    }
+                    if (code == "ControlLeft") {
+                        this.ctrlKey = true;
+                        return;
+                    }
+                    if (code == "MetaLeft") {
+                        this.metaKey = true;
+                        return;
+                    }
+                    if (code == "ShiftLeft") {
+                        this.shiftKey = true;
+                        return;
+                    }
+                    var keyCode = this.getKeyCode(code);
+                    if (keyCode == null) {return;}
+                    if (this.keys.indexOf(keyCode) != -1) {return;}
+                    this.keys.push(keyCode)
+                }
+
+                KeyUp(code) {
+                    if (code == "AltLeft") {
+                        this.altKey = false;
+                        return;
+                    }
+                    if (code == "ControlLeft") {
+                        this.ctrlKey = false;
+                        return;
+                    }
+                    if (code == "MetaLeft") {
+                        this.metaKey = false;
+                        return;
+                    }
+                    if (code == "ShiftLeft") {
+                        this.shiftKey = false;
+                        return;
+                    }
+                    var keyCode = this.getKeyCode(code);
+                    if (keyCode == null) {return;}
+                    var index = this.keys.indexOf(keyCode)
+                    if (index == -1) {return;}
+                    this.keys.splice(index, 1);
+                }
+            }
+
+            var keyState = new KeyState();
+
+            function setStatusText(msg) {
+                statusText.value = msg;
+                console.log("status: " + msg);
+            }
+
+            function wsSend(data) {
+                if (!ws) {return;}
+                if (ws.readyState != WebSocket.OPEN) {
+                    disconnect();
+                    return;
+                }
+                ws.send(data);
+                keepAliveCount = 0;
+            }
+
+            function keepAlive() {
+                if (!ws) {
+                    clearInterval(keepAliveTimer);
+                    keepAliveCount = 0;
+                    return;
+                }
+
+                keepAliveCount++;
+                if (keepAliveCount > 10) {
+                    keepAliveCount = 0;
+
+                    var req = {
+                        type: "keepAlive",
+                        payload: null
+                    };
+                    wsSend(JSON.stringify(req));
+                }
+
+                if (!ws) {
+                    setStatusText("WebSocket timeout");
+                }
+            }
+
+            function connect() {
+                if (!("WebSocket" in window)) {
+                    alert("WebSocket not supported.");
+                    return;
+                }
+
+                document.getElementById('connect').disabled = true;
+                document.getElementById('disconnect').disabled = false;
+
+                var wsServer = location.host;
+                var wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+                var wsEndpoint = wsProtocol + '//' + wsServer + '/api/ws';
+                ws = new WebSocket(wsEndpoint);
+
+                function initRequest() {
+                    var enableMouse = document.getElementById('enable-mouse').checked;
+                    var enableKeyboard = document.getElementById('enable-keyboard').checked;
+                    var req = {
+                        type: "init",
+                        payload: {
+                            mouse: enableMouse,
+                            keyboard: enableKeyboard,
+                        }
+                    };
+                    wsSend(JSON.stringify(req));
+                }
+
+                ws.onopen = () => {
+                    setStatusText("WebSocket connected")
+                    initRequest();
+                };
+
+                ws.onmessage = (e) => {
+                    var msg = JSON.parse(e.data);
+                    console.log("onMessage: "+ msg);
+                };
+
+                ws.onerror = (e) => {
+                    disconnect();
+                    setStatusText("WebSocket ERROR")
+                    alert("An error has occurred.");
+                };
+
+                keepAliveTimer = setInterval(keepAlive, 1000)
+
+                keyState.Clear();
+            }
+
+            function disconnect() {
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+                document.getElementById('connect').disabled = false;
+                document.getElementById('disconnect').disabled = true;
+
+                setStatusText("WebSocket disconnected")
+            }
+
+            window.addEventListener("DOMContentLoaded", () => {
+                var video = document.getElementById('remote-video');
+                var keyinput = document.getElementById('keyinput');
+                video.addEventListener("click", () => {keyinput.focus();});
+                video.addEventListener("contextmenu", (e) => {e.preventDefault()})
+                video.addEventListener("mousedown", onMouseEvent);
+                video.addEventListener("mouseup", onMouseEvent);
+                video.addEventListener("mousemove", onMouseEvent);
+                keyinput.addEventListener("keydown", onKeyDown);
+                keyinput.addEventListener("keyup", onKeyUp);
+                
+                statusText = document.getElementById('status-text');
+            });
+
+            window.onbeforeunload = () => {
+                if (ws) {
+                    disconnect();
+                }
+            };
+
+            function onKeyEvent() {
+                var request = {
+                    "type": "keyEvent",
+                    "payload": {
+                        "code": keyState.keys,
+                        "altKey": keyState.altKey,
+                        "ctrlKey": keyState.ctrlKey,
+                        "metaKey": keyState.metaKey,
+                        "shiftKey": keyState.shiftKey,
+                    }
+                }
+                wsSend(JSON.stringify(request));
+            }
+
+            function onKeyDown(e) {
+                e.preventDefault();
+                if (e.repeat) {return;}
+
+                keyState.KeyDown(e.code);
+                onKeyEvent();
+            }
+
+            function onKeyUp(e) {
+                e.preventDefault();
+
+                keyState.KeyUp(e.code);
+                onKeyEvent();
+            }
+
+            function onMouseEvent(e) {
+                var request = {
+                    "type": "mouseEvent",
+                    "payload": {
+                        "buttons": e.buttons,
+                        "pos": {
+                            "x": e.offsetX,
+                            "y": e.offsetY,
+                        }
+                    }
+                }
+
+                wsSend(JSON.stringify(request));
+            }
+        </script>
+        <style>
+            .remote-video {
+                background-color: #000;
+            }
+            .keyinput-box {
+                width: 0px;
+                height: 0px;
+                z-index: -1;
+            }
+            .keyinput {
+                opacity: 0;
+            }
+            .status-text:disabled{
+                border: solid 1px #888;
+                background-color: #fff;
+                color: #000;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="keyinput-box">
+            <input type="text" id="keyinput" class="keyinput">
+        </div>
+        <div id="video-box">
+            <video id="remote-video" class="remote-video" autoplay="" width="1280" height="720">
+                Your browser does not support the video tag.
+            </video>
+        </div>
+        <div id="command-box">
+            <button id="connect" onclick="connect();">connect</button>
+            <button id="disconnect" onclick="disconnect();" disabled>disconnect</button>
+            Status: <input id="status-text" class="status-text" disabled>
+        </div>
+        <div id="config-box">
+            <input type="checkbox" id="enable-mouse" checked> mouse<br>
+            <input type="checkbox" id="enable-keyboard" checked> keyboard<br>
+        </div>
+    </body>
+</html>
