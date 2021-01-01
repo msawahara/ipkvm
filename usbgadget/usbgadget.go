@@ -52,10 +52,28 @@ type USBGadget struct {
 	Functions     map[string]*USBGadgetFunction
 }
 
+var configFsDir string = "/sys/kernel/config"
+
+func getGadgetDir(gadgetName string) string {
+	return configFsDir + "/usb_gadget/" + gadgetName
+}
+
+func getConfigDir(gadgetName string) string {
+	return getGadgetDir(gadgetName) + "/configs/c.1"
+}
+
+func min(a, b int) int {
+	if a > b {
+		return b
+	}
+	return a
+}
+
 func (d *USBGadgetDevice) Get() (string, error) {
 	if len(d.Device) != 0 {
 		return d.Device, nil
 	}
+
 	data, _ := ioutil.ReadFile(d.ConfigDir + "/dev")
 	ids := strings.Split(strings.TrimRight(string(data), "\n"), ":")
 	major, _ := strconv.Atoi(ids[0])
@@ -84,10 +102,10 @@ func (d *USBGadgetDevice) Get() (string, error) {
 	return d.Device, nil
 }
 
-func (k *USBGadgetKeyboard) Send(code []int, altKey, ctrlKey, metaKey, shiftKey bool) {
+func (k *USBGadgetKeyboard) Send(code []int, altKey, ctrlKey, metaKey, shiftKey bool) error {
 	dev, err := k.Device.Get()
 	if err != nil {
-		return
+		return err
 	}
 
 	modifier := byte(0)
@@ -105,37 +123,40 @@ func (k *USBGadgetKeyboard) Send(code []int, altKey, ctrlKey, metaKey, shiftKey 
 		modifier |= 8
 	}
 
+	report_keys := code[:min(6, len(code))]
+
 	report := make([]byte, 8)
 	report[0] = modifier // Modifier
 	report[1] = 0        // Reserved
-	for i, c := range code {
-		if i > 5 {
-			break
-		}
+	for i, c := range report_keys {
 		report[2+i] = byte(c) // Keycodes
 	}
 
-	ioutil.WriteFile(dev, report, 0600)
+	err = ioutil.WriteFile(dev, report, 0600)
+
+	return err
 }
 
-func (m *USBGadgetMouse) Send(buttons, x, y int) {
+func (m *USBGadgetMouse) Send(buttons, x, y int) error {
 	dev, err := m.Device.Get()
 	if err != nil {
-		return
+		return err
 	}
 
 	dx := int8(math.Max(math.Min(float64(x-m.X), 127), -128))
 	dy := int8(math.Max(math.Min(float64(y-m.Y), 127), -128))
+
+	m.X = x
+	m.Y = y
 
 	report := make([]byte, 3)
 	report[0] = byte(buttons & 0x07)
 	report[1] = byte(dx)
 	report[2] = byte(dy)
 
-	ioutil.WriteFile(dev, report, 0600)
+	err = ioutil.WriteFile(dev, report, 0600)
 
-	m.X = x
-	m.Y = y
+	return err
 }
 
 func (g USBGadget) AddMouse(name string) *USBGadgetMouse {
@@ -153,7 +174,8 @@ func (g USBGadget) AddMouse(name string) *USBGadgetMouse {
 	g.AddFunction(name, f)
 
 	m := new(USBGadgetMouse)
-	m.Device.ConfigDir = "/sys/kernel/config/usb_gadget/" + g.Name + "/configs/c.1/" + fmt.Sprintf("%s.%s", f.Type, name)
+	m.Device.ConfigDir = getConfigDir(g.Name) + fmt.Sprintf("/%s.%s", f.Type, name)
+
 	return m
 }
 
@@ -172,7 +194,8 @@ func (g USBGadget) AddKeyboard(name string) *USBGadgetKeyboard {
 	g.AddFunction(name, f)
 
 	k := new(USBGadgetKeyboard)
-	k.Device.ConfigDir = "/sys/kernel/config/usb_gadget/" + g.Name + "/configs/c.1/" + fmt.Sprintf("%s.%s", f.Type, name)
+	k.Device.ConfigDir = getConfigDir(g.Name) + fmt.Sprintf("/%s.%s", f.Type, name)
+
 	return k
 }
 
@@ -181,8 +204,9 @@ func (g USBGadget) AddFunction(name string, f *USBGadgetFunction) {
 }
 
 func (g USBGadget) Start() {
-	gadgetDir := "/sys/kernel/config/usb_gadget/" + g.Name
+	gadgetDir := getGadgetDir(g.Name)
 
+	// set device infomation
 	os.Mkdir(gadgetDir, 0755)
 	ioutil.WriteFile(gadgetDir+"/bMaxPacketSize0", []byte(strconv.Itoa(g.MaxPacketSize)), 0644)
 	ioutil.WriteFile(gadgetDir+"/idVendor", []byte(strconv.Itoa(g.IdVendor)), 0644)
@@ -190,6 +214,7 @@ func (g USBGadget) Start() {
 	ioutil.WriteFile(gadgetDir+"/bcdUSB", []byte(strconv.Itoa(g.UsbVersion)), 0644)
 	ioutil.WriteFile(gadgetDir+"/bcdDevice", []byte(strconv.Itoa(g.DeviceVesion)), 0644)
 
+	// create string descriptor
 	for l, s := range g.Strings {
 		stringsDir := gadgetDir + "/strings/" + fmt.Sprintf("0x%04x", l)
 
@@ -199,9 +224,10 @@ func (g USBGadget) Start() {
 		ioutil.WriteFile(stringsDir+"/product", []byte(s.Product), 0644)
 	}
 
-	configDir := gadgetDir + "/configs/c.1"
+	configDir := getConfigDir(g.Name)
 	os.Mkdir(configDir, 0755)
 
+	// create function directories
 	for n, f := range g.Functions {
 		functionDir := gadgetDir + "/functions/" + fmt.Sprintf("%s.%s", f.Type, n)
 
@@ -214,15 +240,17 @@ func (g USBGadget) Start() {
 		os.Symlink(functionDir, configDir+fmt.Sprintf("/%s.%s", f.Type, n))
 	}
 
+	// use first one
 	files, _ := ioutil.ReadDir("/sys/class/udc")
 	udc := filepath.Base(files[0].Name())
 
+	// attach to usb device controller
 	ioutil.WriteFile(gadgetDir+"/UDC", []byte(udc), 0644)
 }
 
 func (g USBGadget) Stop() {
-	gadgetDir := "/sys/kernel/config/usb_gadget/" + g.Name
-	configDir := gadgetDir + "/configs/c.1"
+	gadgetDir := getGadgetDir(g.Name)
+	configDir := getConfigDir(g.Name)
 
 	// detach from usb device controller
 	ioutil.WriteFile(gadgetDir+"/UDC", []byte("\n"), 0644)
@@ -256,5 +284,6 @@ func NewUSBGadget(name string) *USBGadget {
 		Product:      "Generic USB Device",
 	}
 	g.Functions = map[string]*USBGadgetFunction{}
+
 	return g
 }
