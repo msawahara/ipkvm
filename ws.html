@@ -249,10 +249,19 @@
                     var enableMouse = document.getElementById('enable-mouse').checked;
                     var enableMouseAbsolute = document.getElementById('enable-mouse-absolute').checked;
                     var enableKeyboard = document.getElementById('enable-keyboard').checked;
+                    var videoResolutions = document.getElementById('video-resolution').value.split(',');
+                    var videoWidth = parseInt(videoResolutions[0]);
+                    var videoHeight = parseInt(videoResolutions[1]);
+                    var videoFramerate = parseInt(videoResolutions[2]);
                     var req = {
                         type: "init",
                         payload: {
-                            remoteVideo: enableRemoteVideo,
+                            remoteVideo: {
+                                enable: enableRemoteVideo,
+                                width: videoWidth,
+                                height: videoHeight,
+                                framerate: videoFramerate,
+                            },
                             mouse: enableMouse,
                             mouseAbs: enableMouseAbsolute,
                             keyboard: enableKeyboard,
@@ -304,6 +313,8 @@
                 };
 
                 keyState.Clear();
+
+                configLock(true);
             }
 
             /**
@@ -394,14 +405,33 @@
                 document.getElementById('disconnect').disabled = true;
 
                 setStatusText("WebSocket disconnected")
+
+                configLock(false);
             }
 
             function fullscreen() {
                 document.getElementById('screen-box').requestFullscreen();
             }
 
+            /** @param {boolean} lock */
+            function configLock(lock) {
+                for (var e of document.getElementById('config-items').children) {
+                    if (e.nodeName !== "INPUT" && e.nodeName !== "SELECT") {continue;}
+                    e.disabled = lock;
+                }
+            }
+
             /** @param {Event} e */
             function onFullscreenChange(e) {
+                resizeVideo();
+            }
+
+            /** @param {Event} e */
+            function onLoadedMetadata(e) {
+                resizeVideo();
+            }
+
+            function resizeVideo() {
                 if (document.fullscreenElement) {
                     // fullscreen
                     /** @type {HTMLVideoElement} */
@@ -413,8 +443,11 @@
                     var video = document.getElementById('remote-video');
                     if (video.videoHeight == 0 || video.videoWidth == 0) {
                         // set default size if no media is loaded
-                        video.width = 1280;
-                        video.height = 720;
+                        var videoResolutions = document.getElementById('video-resolution').value.split(',');
+                        var videoWidth = parseInt(videoResolutions[0]);
+                        var videoHeight = parseInt(videoResolutions[1]);
+                        video.width = videoWidth;
+                        video.height = videoHeight;
                     } else {
                         video.width = video.videoWidth;
                         video.height = video.videoHeight;
@@ -433,6 +466,7 @@
                 video.addEventListener("mousedown", onMouseEvent);
                 video.addEventListener("mouseup", onMouseEvent);
                 video.addEventListener("mousemove", onMouseEvent);
+                video.addEventListener("loadedmetadata", onLoadedMetadata);
                 keyinput.addEventListener("keydown", onKeyDown);
                 keyinput.addEventListener("keyup", onKeyUp);
                 
@@ -578,13 +612,20 @@
         <details id="config-box">
             <summary>configure</summary>
             <fieldset>
-                <input type="checkbox" id="enable-remote-video" checked> remote-video<br>
-                <input type="checkbox" id="enable-remote-audio" checked> remote-audio<br>
-                <input type="checkbox" id="enable-mouse"> mouse (relative pos. for BIOS.)<br>
-                <input type="checkbox" id="enable-mouse-absolute" checked> mouse (absolute pos.)<br>
-                <input type="checkbox" id="enable-keyboard" checked> keyboard<br>
-                <input type="checkbox" id="enable-gamepad"> gamepad<br>
-                <input type="number" id="video-resolution-width" value="1280" min="320" max="1920" style="width: 4em;">x<input type="number" id="video-resolution-height" value="720" min="240" max="1080" style="width: 4em;"> video resolutoin (for streaming)<br>
+                <div id="config-items">
+                    <input type="checkbox" id="enable-remote-video" checked> remote-video<br>
+                    <input type="checkbox" id="enable-remote-audio" checked> remote-audio<br>
+                    <input type="checkbox" id="enable-mouse"> mouse (relative pos. for BIOS.)<br>
+                    <input type="checkbox" id="enable-mouse-absolute" checked> mouse (absolute pos.)<br>
+                    <input type="checkbox" id="enable-keyboard" checked> keyboard<br>
+                    <input type="checkbox" id="enable-gamepad"> gamepad<br>
+                    <select name="video-resolution" id="video-resolution">
+                        <option value="1920,1080,30">1920x1080, 30 fps</option>
+                        <option value="1280,720,60" >1280x720, 60 fps</option>
+                        <option value="1280,720,30" selected>1280x720, 30 fps</option>
+                        <option value="1024,768,30" >1024x768, 30 fps</option>
+                    </select> video resolutoin (for streaming)<br>
+                </div>
             </fieldset>
         </details>
     </body>

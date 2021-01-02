@@ -34,10 +34,15 @@ type MouseEvent struct {
 type MouseAbsEvent MouseEvent
 
 type InitRequest struct {
-	RemoteVideo bool `json:"remoteVideo"`
-	Mouse       bool `json:"mouse"`
-	MouseAbs    bool `json:"mouseAbs"`
-	Keyboard    bool `json:"keyboard"`
+	RemoteVideo struct {
+		Enable    bool `json:"enable"`
+		Width     int  `json:"width"`
+		Height    int  `json:"height"`
+		Framerate int  `json:"framerate"`
+	} `json:"remoteVideo"`
+	Mouse    bool `json:"mouse"`
+	MouseAbs bool `json:"mouseAbs"`
+	Keyboard bool `json:"keyboard"`
 }
 
 type WSRequest struct {
@@ -144,7 +149,7 @@ func OnICEConnectionClose(c *KVMContext) {
 	}
 }
 
-func initWebRTC(c *KVMContext) {
+func initWebRTC(c *KVMContext, width, height, framerate int) {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -188,7 +193,7 @@ func initWebRTC(c *KVMContext) {
 	c.VideoTrack = newTrackGst(
 		"video",
 		"video/h264",
-		"v4l2src device=/dev/video0 ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec ! videoconvert ! omxh264enc target-bitrate=3000000 control-rate=1",
+		fmt.Sprintf("v4l2src device=/dev/video0 ! image/jpeg,width=%d,height=%d,framerate=%d/1 ! jpegdec ! videoconvert ! omxh264enc target-bitrate=3000000 control-rate=1", width, height, framerate),
 		c.Echo.Logger(),
 	)
 	c.PC.AddTrack(c.VideoTrack.Track)
@@ -202,8 +207,8 @@ func onInitRequest(c *KVMContext, wsReq WSRequest) {
 	var r InitRequest
 	json.Unmarshal(wsReq.Payload, &r)
 
-	if r.RemoteVideo {
-		initWebRTC(c)
+	if r.RemoteVideo.Enable {
+		initWebRTC(c, r.RemoteVideo.Width, r.RemoteVideo.Height, r.RemoteVideo.Framerate)
 	}
 
 	enableUsb := r.Mouse || r.MouseAbs || r.Keyboard
