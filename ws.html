@@ -247,12 +247,14 @@
                 function initRequest() {
                     var enableRemoteVideo = document.getElementById('enable-remote-video').checked;
                     var enableMouse = document.getElementById('enable-mouse').checked;
+                    var enableMouseAbsolute = document.getElementById('enable-mouse-absolute').checked;
                     var enableKeyboard = document.getElementById('enable-keyboard').checked;
                     var req = {
                         type: "init",
                         payload: {
                             remoteVideo: enableRemoteVideo,
                             mouse: enableMouse,
+                            mouseAbs: enableMouseAbsolute,
                             keyboard: enableKeyboard,
                         }
                     };
@@ -394,11 +396,40 @@
                 setStatusText("WebSocket disconnected")
             }
 
+            function fullscreen() {
+                document.getElementById('screen-box').requestFullscreen();
+            }
+
+            /** @param {Event} e */
+            function onFullscreenChange(e) {
+                if (document.fullscreenElement) {
+                    // fullscreen
+                    /** @type {HTMLVideoElement} */
+                    var video = document.getElementById('remote-video');
+                    video.width = document.getElementById('screen-box').offsetWidth;
+                    video.height = document.getElementById('screen-box').offsetHeight;
+                } else {
+                    // not fullscreen
+                    var video = document.getElementById('remote-video');
+                    if (video.videoHeight == 0 || video.videoWidth == 0) {
+                        // set default size if no media is loaded
+                        video.width = 1280;
+                        video.height = 720;
+                    } else {
+                        video.width = video.videoWidth;
+                        video.height = video.videoHeight;
+                    }
+                }
+            }
+
+            window.addEventListener('fullscreenchange', onFullscreenChange);
+
             window.addEventListener("DOMContentLoaded", () => {
+                /** @type {HTMLVideoElement} */
                 var video = document.getElementById('remote-video');
                 var keyinput = document.getElementById('keyinput');
                 video.addEventListener("click", () => {keyinput.focus();});
-                video.addEventListener("contextmenu", (e) => {e.preventDefault()})
+                video.addEventListener("contextmenu", (e) => {e.preventDefault();})
                 video.addEventListener("mousedown", onMouseEvent);
                 video.addEventListener("mouseup", onMouseEvent);
                 video.addEventListener("mousemove", onMouseEvent);
@@ -453,18 +484,59 @@
              * @param {MouseEvent} e
              */
             function onMouseEvent(e) {
-                var request = {
-                    "type": "mouseEvent",
-                    "payload": {
-                        "buttons": e.buttons,
-                        "pos": {
-                            "x": e.offsetX,
-                            "y": e.offsetY,
+                var enableMouse = document.getElementById('enable-mouse').checked;
+                var enableMouseAbsolute = document.getElementById('enable-mouse-absolute').checked;
+                if (enableMouse) {
+                    var request = {
+                        "type": "mouseEvent",
+                        "payload": {
+                            "buttons": e.buttons,
+                            "pos": {
+                                "x": e.offsetX,
+                                "y": e.offsetY,
+                            }
                         }
                     }
-                }
 
-                wsSend(JSON.stringify(request));
+                    wsSend(JSON.stringify(request));
+                } else if (enableMouseAbsolute) {
+                    const reportMin = 0;
+                    const reportMax = 32767;
+
+                    /** @type {HTMLVideoElement} */
+                    var videoElement = document.getElementById('remote-video');
+                    var offsetWidth = videoElement.offsetWidth;
+                    var offsetHeight = videoElement.offsetHeight;
+                    var videoWidth = videoElement.videoWidth;
+                    var videoHeight = videoElement.videoHeight;
+
+                    // width and height returns zero if no media is loaded
+                    if (videoWidth == 0 || videoHeight == 0) {return;}
+
+                    var videoZoom = Math.min(offsetWidth / videoWidth, offsetHeight / videoHeight);
+
+                    var offsetLeft = (offsetWidth - videoWidth * videoZoom) / 2;
+                    var offsetTop = (offsetHeight - videoHeight * videoZoom) / 2;
+
+                    var x = Math.round((e.offsetX - offsetLeft) / (videoWidth * videoZoom - 1) * reportMax);
+                    var y = Math.round((e.offsetY - offsetTop) / (videoHeight * videoZoom - 1) * reportMax);
+
+                    if (x < reportMin || reportMax < x) {return;}
+                    if (y < reportMin || reportMax < y) {return;}
+
+                    var request = {
+                        "type": "mouseAbsEvent",
+                        "payload": {
+                            "buttons": e.buttons,
+                            "pos": {
+                                "x": x,
+                                "y": y,
+                            }
+                        }
+                    }
+
+                    wsSend(JSON.stringify(request));
+                }
             }
         </script>
         <style>
@@ -487,30 +559,32 @@
         </style>
     </head>
     <body>
-        <div class="keyinput-box">
-            <input type="text" id="keyinput" class="keyinput">
-        </div>
-        <div id="video-box">
-            <video id="remote-video" class="remote-video" width="1280" height="720">
-                Your browser does not support the video tag.
-            </video>
+        <div id="screen-box">
+            <div class="keyinput-box">
+                <input type="text" id="keyinput" class="keyinput">
+            </div>
+            <div id="video-box">
+                <video id="remote-video" class="remote-video" width="1280" height="720">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
         </div>
         <div id="command-box">
             <button id="connect" onclick="connect();">connect</button>
             <button id="disconnect" onclick="disconnect();" disabled>disconnect</button>
             Status: <input id="status-text" class="status-text" disabled>
+            <button id="fullscreen" onclick="fullscreen();">fullscreen</button>
         </div>
         <details id="config-box">
             <summary>configure</summary>
             <fieldset>
                 <input type="checkbox" id="enable-remote-video" checked> remote-video<br>
                 <input type="checkbox" id="enable-remote-audio" checked> remote-audio<br>
-                <input type="checkbox" id="enable-mouse" checked> mouse (relative pos.)<br>
-                <input type="checkbox" id="enable-tablet"> tablet (absolute pos.)<br>
+                <input type="checkbox" id="enable-mouse"> mouse (relative pos. for BIOS.)<br>
+                <input type="checkbox" id="enable-mouse-absolute" checked> mouse (absolute pos.)<br>
                 <input type="checkbox" id="enable-keyboard" checked> keyboard<br>
                 <input type="checkbox" id="enable-gamepad"> gamepad<br>
                 <input type="number" id="video-resolution-width" value="1280" min="320" max="1920" style="width: 4em;">x<input type="number" id="video-resolution-height" value="720" min="240" max="1080" style="width: 4em;"> video resolutoin (for streaming)<br>
-                <input type="number" id="screen-resolution-width" value="1280" min="320" max="1920" style="width: 4em;">x<input type="number" id="screen-resolution-height" value="720" min="240" max="1080" style="width: 4em;"> screen resolutoin (for tablet pos.)<br>                            
             </fieldset>
         </details>
     </body>
