@@ -31,9 +31,12 @@ type MouseEvent struct {
 	} `json:"pos"`
 }
 
+type MouseAbsEvent MouseEvent
+
 type InitRequest struct {
 	RemoteVideo bool `json:"remoteVideo"`
 	Mouse       bool `json:"mouse"`
+	MouseAbs    bool `json:"mouseAbs"`
 	Keyboard    bool `json:"keyboard"`
 }
 
@@ -50,6 +53,7 @@ type TrackContext struct {
 type KVMContext struct {
 	Usb        *usbgadget.USBGadget
 	Mouse      *usbgadget.USBGadgetMouse
+	MouseAbs   *usbgadget.USBGadgetMouseAbsolute
 	Keyboard   *usbgadget.USBGadgetKeyboard
 	Echo       echo.Context
 	WS         *websocket.Conn
@@ -202,11 +206,14 @@ func onInitRequest(c *KVMContext, wsReq WSRequest) {
 		initWebRTC(c)
 	}
 
-	enableUsb := r.Keyboard || r.Mouse
+	enableUsb := r.Mouse || r.MouseAbs || r.Keyboard
 	if enableUsb {
 		c.Usb = usbgadget.NewUSBGadget("g0")
 		if r.Mouse {
 			c.Mouse = c.Usb.AddMouse("mouse")
+		}
+		if r.MouseAbs {
+			c.MouseAbs = c.Usb.AddMouseAbsolute("mouseAbs")
 		}
 		if r.Keyboard {
 			c.Keyboard = c.Usb.AddKeyboard("keyboard")
@@ -221,6 +228,15 @@ func onMouseEvent(c *KVMContext, wsReq WSRequest) {
 
 	if c.Mouse != nil {
 		c.Mouse.Send(e.Buttons, e.Pos.X, e.Pos.Y)
+	}
+}
+
+func onMouseAbsEvent(c *KVMContext, wsReq WSRequest) {
+	var e MouseAbsEvent
+	json.Unmarshal(wsReq.Payload, &e)
+
+	if c.MouseAbs != nil {
+		c.MouseAbs.Send(e.Buttons, e.Pos.X, e.Pos.Y)
 	}
 }
 
@@ -287,6 +303,8 @@ func wsHandler(ws *websocket.Conn, e echo.Context) {
 			onInitRequest(c, req)
 		case "mouseEvent":
 			onMouseEvent(c, req)
+		case "mouseAbsEvent":
+			onMouseAbsEvent(c, req)
 		case "keyEvent":
 			onKeyboardEvent(c, req)
 		case "answer":

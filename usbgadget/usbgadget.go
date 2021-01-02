@@ -12,6 +12,31 @@ import (
 	"syscall"
 )
 
+/* device information */
+const (
+	USB_VENDOR_ID         int    = 0x1d6b // The Linux Foundation
+	USB_PRODUCT_ID        int    = 0x0104 // Multifunction Composite Gadget
+	USB_VERSION           int    = 0x0200 // USB 2.0
+	USB_DEVICE_VERSION    int    = 0x0100 // v.1.0.0
+	USB_DESC_LANG_ID      int    = 0x0409 // en-US
+	USB_DESC_SERIAL       string = "00000000"
+	USB_DESC_MANUFACTURER string = "The Linux Foundation"
+	USB_DESC_PRODUCT_NAME string = "Generic USB Device"
+)
+
+/* USB subclass */
+const (
+	USB_SUBCLASS_NO_SUBCLASS    int = 0
+	USB_SUBCLASS_BOOT_INTERFACE int = 1
+)
+
+/* USB protocol */
+const (
+	USB_PROTOCOL_NONE     int = 0
+	USB_PROTOCOL_KEYBOARD int = 1
+	USB_PROTOCOL_MOUSE    int = 2
+)
+
 type USBGadgetDevice struct {
 	ConfigDir string
 	Device    string
@@ -23,7 +48,15 @@ type USBGadgetMouse struct {
 	Device USBGadgetDevice
 }
 
+type USBGadgetMouseAbsolute struct {
+	Device USBGadgetDevice
+}
+
 type USBGadgetKeyboard struct {
+	Device USBGadgetDevice
+}
+
+type USBGadgetGamePad struct {
 	Device USBGadgetDevice
 }
 
@@ -159,17 +192,63 @@ func (m *USBGadgetMouse) Send(buttons, x, y int) error {
 	return err
 }
 
+func (m *USBGadgetMouseAbsolute) Send(buttons, x, y int) error {
+	dev, err := m.Device.Get()
+	if err != nil {
+		return err
+	}
+
+	report := make([]byte, 5)
+	report[0] = byte(buttons & 0x07)
+	report[1] = byte(x & 0xff)
+	report[2] = byte((x >> 8) & 0xff)
+	report[3] = byte(y & 0xff)
+	report[4] = byte((y >> 8) & 0xff)
+
+	err = ioutil.WriteFile(dev, report, 0600)
+
+	return err
+}
+
 func (g USBGadget) AddMouse(name string) *USBGadgetMouse {
 	f := new(USBGadgetFunction)
 	f.Type = "hid"
-	f.Protocol = 2
-	f.SubClass = 1
+	f.Protocol = USB_PROTOCOL_MOUSE
+	f.SubClass = USB_SUBCLASS_BOOT_INTERFACE
 	f.ReportLength = 8
 	f.ReportDescriptor = []byte{
-		0x05, 0x01, 0x09, 0x02, 0xa1, 0x01, 0x09, 0x01, 0xa1, 0x00, 0x05, 0x09, 0x19, 0x01, 0x29, 0x03,
-		0x15, 0x00, 0x25, 0x01, 0x95, 0x03, 0x75, 0x01, 0x81, 0x02, 0x95, 0x01, 0x75, 0x05, 0x81, 0x01,
-		0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x15, 0x81, 0x25, 0x7f, 0x75, 0x08, 0x95, 0x02, 0x81, 0x06,
-		0xc0, 0xc0,
+		0x05, 0x01, // [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
+		0x09, 0x02, // [L] 09: Usage           (bSize = 1), 02: Mouse (in Generic Desktop Page)
+		0xa1, 0x01, // [M] a1: Collection      (bSize = 1), 01: Application
+
+		0x09, 0x01, // [L] 09: Usage           (bSize = 1), 01: Pointer (in Generic Desktop Page)
+		0xa1, 0x00, // [M] a1: Collection      (bSize = 1), 00: Physical
+
+		// Input: buttons, 1 byte (1 bit/field * 3 fields + padding)
+		0x95, 0x03, // [G] 95: Report Count    (bSize = 1), 03: 3 fields
+		0x75, 0x01, // [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
+		0x05, 0x09, // [G] 05: Usage Page      (bSize = 1), 09: Button
+		0x19, 0x01, // [L] 19: Usage Minimum   (bSize = 1), 01: Button 1, Selector (in Keyboard/Keypad Page)
+		0x29, 0x03, // [L] 29: Usage Maximum   (bSize = 1), 03: Button 3, Selector (in Keyboard/Keypad Page)
+		0x15, 0x00, // [G] 15: Logical Minimum (bSize = 1), 00: min is 0
+		0x25, 0x01, // [G] 25: Logical Maximum (bSize = 1), 01: max is 1
+		0x81, 0x02, // [M] 81: Input           (bSize = 1), 02: Variable, Data, Absolute
+		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 01: 1 fields
+		0x75, 0x05, // [G] 75: Report Size     (bSize = 1), 05: 5 bits/field
+		0x81, 0x01, // [M] 81: Input           (bSize = 1), 03: Constant (for padding)
+
+		// Input: X, Y, 2 byte (8 bits/field * 2 fields)
+		0x75, 0x08, // [G] 75: Report Size     (bSize = 1), 08: 8 bits/field
+		0x95, 0x02, // [G] 95: Report Count    (bSize = 1), 02: 2 fields
+		0x05, 0x01, // [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
+		0x09, 0x30, // [L] 09: Usage           (bSize = 1), 30: X, Dynamic Value (in Generic Desktop Page)
+		0x09, 0x31, // [L] 09: Usage           (bSize = 1), 31: Y, Dynamic Value (in Generic Desktop Page)
+		0x15, 0x81, // [G] 15: Logical Minimum (bSize = 1), 81: min is -127
+		0x25, 0x7f, // [G] 25: Logical Maximum (bSize = 1), 7f: max is 127
+		0x81, 0x06, // [M] 81: Input           (bSize = 1), 06: Variable, Data, Relative
+
+		0xc0, //       [M] c0: End Collection
+		0xc0, //       [M] c0: End Collection
 	}
 	g.AddFunction(name, f)
 
@@ -179,11 +258,117 @@ func (g USBGadget) AddMouse(name string) *USBGadgetMouse {
 	return m
 }
 
+func (g USBGadget) AddMouseAbsolute(name string) *USBGadgetMouseAbsolute {
+	f := new(USBGadgetFunction)
+	f.Type = "hid"
+	f.Protocol = USB_PROTOCOL_NONE
+	f.SubClass = USB_SUBCLASS_NO_SUBCLASS
+	f.ReportLength = 9
+	f.ReportDescriptor = []byte{
+		0x05, 0x01, //       [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
+		0x09, 0x02, //       [L] 09: Usage           (bSize = 1), 02: Mouse (in Generic Desktop Page)
+		0xa1, 0x01, //       [M] a1: Collection      (bSize = 1), 01: Application
+
+		0x09, 0x01, //       [L] 09: Usage           (bSize = 1), 01: Pointer (in Generic Desktop Page)
+		0xa1, 0x00, //       [M] a1: Collection      (bSize = 1), 00: Physical
+
+		// Input: buttons, 1 byte (1 bit/field * 3 fields + padding)
+		0x95, 0x03, //       [G] 95: Report Count    (bSize = 1), 08: 3 fields
+		0x75, 0x01, //       [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
+		0x05, 0x09, //       [G] 05: Usage Page      (bSize = 1), 09: Button
+		0x19, 0x01, //       [L] 19: Usage Minimum   (bSize = 1), 01: Button 1, Selector (in Keyboard/Keypad Page)
+		0x29, 0x03, //       [L] 29: Usage Maximum   (bSize = 1), 03: Button 3, Selector (in Keyboard/Keypad Page)
+		0x15, 0x00, //       [G] 15: Logical Minimum (bSize = 1), 00: min is 0
+		0x25, 0x01, //       [G] 25: Logical Maximum (bSize = 1), 01: max is 1
+		0x81, 0x02, //       [M] 81: Input           (bSize = 1), 02: Variable, Data, Absolute
+		0x95, 0x01, //       [G] 95: Report Count    (bSize = 1), 08: 1 fields
+		0x75, 0x05, //       [G] 75: Report Size     (bSize = 1), 01: 5 bits/field
+		0x81, 0x01, //       [M] 81: Input           (bSize = 1), 03: Constant (for padding)
+
+		// Input: X, Y, 4 byte (16 its/field * 2 fields)
+		0x75, 0x10, //       [G] 75: Report Size     (bSize = 1), 10: 16 bits/field
+		0x95, 0x02, //       [G] 95: Report Count    (bSize = 1), 02: 2 fields
+		0x05, 0x01, //       [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
+		0x09, 0x30, //       [L] 09: Usage           (bSize = 1), 30: X, Dynamic Value (in Generic Desktop Page)
+		0x09, 0x31, //       [L] 09: Usage           (bSize = 1), 31: Y, Dynamic Value (in Generic Desktop Page)
+		0x16, 0x00, 0x00, // [G] 16: Logical Minimum (bSize = 2), 0000: min is 0
+		0x26, 0xff, 0x7f, // [G] 26: Logical Maximum (bSize = 2), 7fff: max is 32767
+		0x81, 0x02, //       [M] 81: Input           (bSize = 1), 02: Variable, Data, Absolute
+
+		0xc0, //       [M] c0: End Collection
+		0xc0, //       [M] c0: End Collection
+	}
+	g.AddFunction(name, f)
+
+	tablet := new(USBGadgetMouseAbsolute)
+	tablet.Device.ConfigDir = getConfigDir(g.Name) + fmt.Sprintf("/%s.%s", f.Type, name)
+
+	return tablet
+}
+
 func (g USBGadget) AddKeyboard(name string) *USBGadgetKeyboard {
 	f := new(USBGadgetFunction)
 	f.Type = "hid"
-	f.Protocol = 1
-	f.SubClass = 1
+	f.Protocol = USB_PROTOCOL_KEYBOARD
+	f.SubClass = USB_SUBCLASS_BOOT_INTERFACE
+	f.ReportLength = 8
+	f.ReportDescriptor = []byte{
+		0x05, 0x01, // [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
+		0x09, 0x06, // [L] 09: Usage           (bSize = 1), 06: Keyboard (in Generic Desktop Page)
+		0xa1, 0x01, // [M] a1: Collection      (bSize = 1), 01: Application
+
+		// Input: modifier keys, 1 byte (1 bit/field * 8 fields)
+		0x75, 0x01, // [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
+		0x95, 0x08, // [G] 95: Report Count    (bSize = 1), 08: 8 fields
+		0x05, 0x07, // [G] 05: Usage Page      (bSize = 1), 07: Keyboard/Keypad
+		0x19, 0xe0, // [L] 19: Usage Minimum   (bSize = 1), e0: Keyboard LeftControl, Dynamic Flag (in Keyboard/Keypad Page)
+		0x29, 0xe7, // [L] 29: Usage Maximum   (bSize = 1), e7: Keyboard Right GUI,   Dynamic Flag (in Keyboard/Keypad Page)
+		0x15, 0x00, // [G] 15: Logical Minimum (bSize = 1), 00: min is 0
+		0x25, 0x01, // [G] 25: Logical Maximum (bSize = 1), 01: max is 1
+		0x81, 0x02, // [M] 81: Input           (bSize = 1), 02: Variable, Data, Absolute
+
+		// Input: padding, 1 byte
+		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 01: 1 fields
+		0x75, 0x08, // [G] 75: Report Size     (bsize = 1), 08: 8bits/field
+		0x81, 0x03, // [M] 81: Input           (bSize = 1), 03: Constant (for padding)
+
+		// Output: LED status, 1 byte (1 bit/field * 5 fields + padding)
+		0x95, 0x05, // [G] 95: Report Count    (bSize = 1), 01: 5 fields
+		0x75, 0x01, // [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
+		0x05, 0x08, // [G] 05: Usage Page      (bSize = 1), 08: LED
+		0x19, 0x01, // [L] 19: Usage Minimum   (bSize = 1), 01: Num Lock (in LED Page)
+		0x29, 0x05, // [L] 29: Usage Maximum   (bSize = 1), 05: Kana     (in LED Page)
+		0x91, 0x02, // [M] 91: Output          (bSize = 1), 02: Variable, Data, Absoute
+		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 01: 1 fields
+		0x75, 0x03, // [G] 75: Report Size     (bsize = 1), 03: 3 bits/field
+		0x91, 0x03, // [M] 91: Output          (bSize = 1), 03: Constant (for padding)
+
+		// Input: selected keys, 6 byte (8 bits/field * 6 fields)
+		0x95, 0x06, // [G] 95: Report Count    (bSize = 1), 06: 6 fields
+		0x75, 0x08, // [G] 75: Report Size     (bsize = 1), 08: 8 bits/field
+		0x15, 0x00, // [G] 15: Logical Minimum (bSize = 1), 00: min is 0
+		0x25, 0x65, // [G] 25: Logical Maximum (bSize = 1), 65: max is 101
+		0x05, 0x07, // [G] 05: Usage Page      (bSize = 1), 07: Keyboard/Keypad
+		0x19, 0x00, // [L] 19: Usage Minimum   (bSize = 1), 00: Reserved (no event indicated), Selector (in Keyboard/Keypad Page)
+		0x29, 0x65, // [L] 19: Usage Maximum   (bSize = 1), 65: Keyboard Application,          Selector (in Keyboard/Keypad Page)
+		0x81, 0x00, // [M] 81: Input           (bSize = 1), 00: Array, Data
+
+		0xc0, //       [M] c0: End Collection
+	}
+	g.AddFunction(name, f)
+
+	k := new(USBGadgetKeyboard)
+	k.Device.ConfigDir = getConfigDir(g.Name) + fmt.Sprintf("/%s.%s", f.Type, name)
+
+	return k
+}
+
+func (g USBGadget) AddGamePad(name string) *USBGadgetGamePad {
+	// not implemented
+	f := new(USBGadgetFunction)
+	f.Type = "hid"
+	f.Protocol = USB_PROTOCOL_NONE
+	f.SubClass = USB_SUBCLASS_NO_SUBCLASS
 	f.ReportLength = 8
 	f.ReportDescriptor = []byte{
 		0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01,
@@ -193,10 +378,10 @@ func (g USBGadget) AddKeyboard(name string) *USBGadgetKeyboard {
 	}
 	g.AddFunction(name, f)
 
-	k := new(USBGadgetKeyboard)
-	k.Device.ConfigDir = getConfigDir(g.Name) + fmt.Sprintf("/%s.%s", f.Type, name)
+	gamepad := new(USBGadgetGamePad)
+	gamepad.Device.ConfigDir = getConfigDir(g.Name) + fmt.Sprintf("/%s.%s", f.Type, name)
 
-	return k
+	return gamepad
 }
 
 func (g USBGadget) AddFunction(name string, f *USBGadgetFunction) {
@@ -273,15 +458,15 @@ func NewUSBGadget(name string) *USBGadget {
 	g := new(USBGadget)
 	g.Name = name
 	g.MaxPacketSize = 64
-	g.IdVendor = 0x1d6b     // The Linux Foundation
-	g.IdProduct = 0x0104    // Multifunction Composite Gadget
-	g.UsbVersion = 0x0200   // USB 2.0
-	g.DeviceVesion = 0x0100 // v.1.0.0
+	g.IdVendor = USB_VENDOR_ID
+	g.IdProduct = USB_PRODUCT_ID
+	g.UsbVersion = USB_VERSION
+	g.DeviceVesion = USB_DEVICE_VERSION
 	g.Strings = map[int]*USBGadgetStringDescriptor{}
-	g.Strings[0x0409] = &USBGadgetStringDescriptor{
-		SerialNumber: "00000000",
-		Manufacturer: "The Linux Foundation",
-		Product:      "Generic USB Device",
+	g.Strings[USB_DESC_LANG_ID] = &USBGadgetStringDescriptor{
+		SerialNumber: USB_DESC_SERIAL,
+		Manufacturer: USB_DESC_MANUFACTURER,
+		Product:      USB_DESC_PRODUCT_NAME,
 	}
 	g.Functions = map[string]*USBGadgetFunction{}
 
