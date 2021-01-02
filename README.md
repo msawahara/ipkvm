@@ -34,12 +34,12 @@ sudo apt install gstreamer1.0-omx gstreamer1.0-alsa gstreamer1.0-plugins-base gs
 
 Install ipkvm
 ```bash
-go get github.com/msawahara/ipkvm
+GO111MODULE=on go get github.com/msawahara/ipkvm
 ```
 
 Register systemd service
 ```bash
-cat << 'EOS' | sudo tee /etc/systemd/system/ipkvm.service
+cat << EOS | sudo tee /etc/systemd/system/ipkvm.service
 [Unit]
 Description=KVM over IP service
 After=network.target
@@ -54,6 +54,6 @@ WantedBy=multi-user.target
 EOS
 ```
 ```bash
-systemctl daemon-reload
-systemctl enable --now ipkvm
+sudo systemctl daemon-reload
+sudo systemctl enable --now ipkvm
 ```
