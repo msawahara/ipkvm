@@ -4,6 +4,14 @@
         <meta charset="UTF-8">
         <title>KVM over IP</title>
         <script type="text/javascript">
+            const keepAliveInterval = 10; // sec
+            /** @type {RTCConfiguration} */
+            const pcConfig = {
+                iceServers: [
+                    {urls: 'stun:stun.l.google.com:19302'}
+                ]
+            }
+
             /** @type {WebSocket} */
             var ws = null;
             /** @type {RTCPeerConnection} */
@@ -13,13 +21,8 @@
             var statusText = null;
             var keepAliveTimer = null;
             var keepAliveCount = 0;
-
-            /** @type {RTCConfiguration} */
-            var pcConfig = {
-                iceServers: [
-                    {urls: 'stun:stun.l.google.com:19302'}
-                ]
-            }
+            /** @type {Array<RTCIceCandidateInit>} */
+            var iceCandidates = [];
 
             class KeyState {
                 constructor() {
@@ -27,6 +30,7 @@
                     this.ctrlKey = false;
                     this.metaKey = false;
                     this.shiftKey = false;
+                    /** @type {Array<number>} */
                     this.keys = [];
                 }
 
@@ -38,6 +42,10 @@
                     this.keys = [];
                 }
 
+                /**
+                 * @param {string} code
+                 * @returns {?number}
+                 */
                 getKeyCode(code) {
                     var map = {
                         KeyA: 4,
@@ -127,51 +135,55 @@
                     return null
                 }
 
+                /**
+                 * @param {string} code
+                 */
                 KeyDown(code) {
-                    if (code == "AltLeft") {
-                        this.altKey = true;
-                        return;
+                    switch (code) {
+                        case 'AltLeft':
+                            this.AltKey = true;
+                            break;
+                        case 'ControlLeft':
+                            this.ctrlKey = true;
+                            break;
+                        case 'MetaLeft':
+                            this.metaKey = true;
+                            break;
+                        case 'ShiftLeft':
+                            this.shiftKey = true;
+                            break;
+                        default:
+                            var keyCode = this.getKeyCode(code);
+                            if (keyCode == null) {return;}
+                            if (this.keys.indexOf(keyCode) != -1) {return;}
+                            this.keys.push(keyCode)
                     }
-                    if (code == "ControlLeft") {
-                        this.ctrlKey = true;
-                        return;
-                    }
-                    if (code == "MetaLeft") {
-                        this.metaKey = true;
-                        return;
-                    }
-                    if (code == "ShiftLeft") {
-                        this.shiftKey = true;
-                        return;
-                    }
-                    var keyCode = this.getKeyCode(code);
-                    if (keyCode == null) {return;}
-                    if (this.keys.indexOf(keyCode) != -1) {return;}
-                    this.keys.push(keyCode)
                 }
 
+                /**
+                 * @param {string} code
+                 */
                 KeyUp(code) {
-                    if (code == "AltLeft") {
-                        this.altKey = false;
-                        return;
+                    switch (code) {
+                        case 'AltLeft':
+                            this.AltKey = false;
+                            break;
+                        case 'ControlLeft':
+                            this.ctrlKey = false;
+                            break;
+                        case 'MetaLeft':
+                            this.metaKey = false;
+                            break;
+                        case 'ShiftLeft':
+                            this.shiftKey = false;
+                            break;
+                        default:
+                            var keyCode = this.getKeyCode(code);
+                            if (keyCode == null) {return;}
+                            var index = this.keys.indexOf(keyCode)
+                            if (index == -1) {return;}
+                            this.keys.splice(index, 1);
                     }
-                    if (code == "ControlLeft") {
-                        this.ctrlKey = false;
-                        return;
-                    }
-                    if (code == "MetaLeft") {
-                        this.metaKey = false;
-                        return;
-                    }
-                    if (code == "ShiftLeft") {
-                        this.shiftKey = false;
-                        return;
-                    }
-                    var keyCode = this.getKeyCode(code);
-                    if (keyCode == null) {return;}
-                    var index = this.keys.indexOf(keyCode)
-                    if (index == -1) {return;}
-                    this.keys.splice(index, 1);
                 }
             }
 
@@ -182,6 +194,9 @@
                 console.log("status: " + msg);
             }
 
+            /**
+             * @param {string} data
+             */
             function wsSend(data) {
                 if (!ws) {return;}
                 if (ws.readyState != WebSocket.OPEN) {
@@ -200,7 +215,7 @@
                 }
 
                 keepAliveCount++;
-                if (keepAliveCount > 10) {
+                if (keepAliveCount >= keepAliveInterval) {
                     keepAliveCount = 0;
 
                     var req = {
@@ -216,8 +231,8 @@
             }
 
             function connect() {
-                if (!("WebSocket" in window)) {
-                    alert("WebSocket not supported.");
+                if (!('WebSocket' in window)) {
+                    alert('WebSocket not supported.');
                     return;
                 }
 
@@ -252,10 +267,12 @@
  
                     var enableRemoteVideo = document.getElementById('enable-remote-video').checked;
                     if (enableRemoteVideo) {
+                        iceCandidates = [];
                         pc = new RTCPeerConnection(pcConfig);
                         pc.onicecandidate = onIceCandidate;
                         pc.ontrack = onTrack;
                         pc.oniceconnectionstatechange = (e) => {
+                            setStatusText('WebRTC: ' + pc.iceConnectionState)
                             console.log("IceConnectionStateChange: " + pc.iceConnectionState);
                             if (pc.iceConnectionState == "disconnected") {
                                 document.getElementById('remote-video').pause()
@@ -309,6 +326,7 @@
             function onReceiveOffer(sdp) {
                 pc.setRemoteDescription(new RTCSessionDescription(sdp)).then(function() {
                     console.log("setRemoteDescription: success.");
+                    processIceCandidate();
                     pc.createAnswer().then(function(answer) {
                         console.log("createAnswer: success.");
                         pc.setLocalDescription(answer);
@@ -326,7 +344,7 @@
              * @param {RTCPeerConnectionIceEvent} e
              */
             function onIceCandidate(e) {
-                setStatusText("onIceCandidate");
+                console.log("onIceCandidate");
                 if (e.candidate !== null) {
                     var request = {
                         type: "addIceCandidate",
@@ -336,7 +354,6 @@
                     return;
                 } else {
                     console.log("onIceCandidate: complete.");
-                    setStatusText("connected.");
                 }
             }
 
@@ -344,9 +361,18 @@
              * @param {RTCIceCandidateInit} c
              */
             function addIceCandidate(c) {
-                setStatusText("addIceCandidate");
-                console.log(c);
-                pc.addIceCandidate(c);
+                console.log('addIceCanditate');
+                iceCandidates.push(c);
+                processIceCandidate();
+            }
+
+            function processIceCandidate() {
+                if (pc.remoteDescription === null) {return;}
+
+                for (var candidate of iceCandidates) {
+                    console.log('process IceCandidate');
+                    pc.addIceCandidate(candidate);
+                }
             }
 
             function disconnect() {
@@ -402,6 +428,9 @@
                 wsSend(JSON.stringify(request));
             }
 
+            /**
+             * @param {KeyboardEvent} e
+             */
             function onKeyDown(e) {
                 e.preventDefault();
                 if (e.repeat) {return;}
@@ -410,6 +439,9 @@
                 onKeyEvent();
             }
 
+            /**
+             * @param {KeyboardEvent} e
+             */
             function onKeyUp(e) {
                 e.preventDefault();
 
@@ -417,6 +449,9 @@
                 onKeyEvent();
             }
 
+            /**
+             * @param {MouseEvent} e
+             */
             function onMouseEvent(e) {
                 var request = {
                     "type": "mouseEvent",
