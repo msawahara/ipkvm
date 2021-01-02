@@ -3,11 +3,17 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/gommon/log"
 	"github.com/msawahara/ipkvm/usbgadget"
+	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v3/pkg/media"
 	"golang.org/x/net/websocket"
+
+	"github.com/notedit/gst"
 )
 
 type KeyboardEvent struct {
@@ -27,8 +33,9 @@ type MouseEvent struct {
 }
 
 type InitRequest struct {
-	Mouse    bool `json:"mouse"`
-	Keyboard bool `json:"keyboard"`
+	RemoteVideo bool `json:"remoteVideo"`
+	Mouse       bool `json:"mouse"`
+	Keyboard    bool `json:"keyboard"`
 }
 
 type WSRequest struct {
@@ -36,67 +43,261 @@ type WSRequest struct {
 	Payload     json.RawMessage `json:"payload"`
 }
 
-func onInitRequest(wsReq WSRequest) {
+type TrackContext struct {
+	Track *webrtc.TrackLocalStaticSample
+	Stop  chan struct{}
+}
+
+type KVMContext struct {
+	Usb        *usbgadget.USBGadget
+	Mouse      *usbgadget.USBGadgetMouse
+	Keyboard   *usbgadget.USBGadgetKeyboard
+	Echo       echo.Context
+	WS         *websocket.Conn
+	PC         *webrtc.PeerConnection
+	AudioTrack *TrackContext
+	VideoTrack *TrackContext
+}
+
+func sendOffer(ws *websocket.Conn, offer webrtc.SessionDescription) error {
+	offerJson, err := json.Marshal(offer)
+	if err != nil {
+		return err
+	}
+
+	req := WSRequest{
+		MessageType: "offer",
+		Payload:     offerJson,
+	}
+	err = websocket.JSON.Send(ws, req)
+
+	return err
+}
+
+func writeSamplesFromGst(c *TrackContext, name, pipelineStr string, logger echo.Logger) {
+	pipeline, err := gst.ParseLaunch(fmt.Sprintf("%s ! appsink name=%s", pipelineStr, name))
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+
+	element := pipeline.GetByName(name)
+	pipeline.SetState(gst.StatePlaying)
+
+	defer func() {
+		pipeline.SetState(gst.StateNull)
+		logger.Infof("stream closed (name: %s)", name)
+	}()
+
+	count := 0
+	for {
+		sample, err := element.PullSample()
+		if err != nil {
+			if element.IsEOS() {
+				break
+			} else {
+				logger.Error(err)
+			}
+		}
+
+		if count == 0 {
+			logger.Infof("write first sample to stream (name: %s)", name)
+		}
+		logger.Debugf("write sample (name: %s, count: %d, duration: %d)", name, count, sample.Duration)
+
+		err = c.Track.WriteSample(media.Sample{Data: sample.Data, Duration: time.Duration(sample.Duration)})
+		if err != nil {
+			logger.Error(err)
+		}
+
+		count++
+
+		select {
+		case <-c.Stop:
+			return
+		default:
+			// NOP
+		}
+	}
+}
+
+func newTrackGst(name, mimeType, pipelineStr string, logger echo.Logger) *TrackContext {
+	track := new(TrackContext)
+	track.Track, _ = webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: mimeType}, name, name)
+	track.Stop = make(chan struct{})
+
+	go writeSamplesFromGst(track, name, pipelineStr, logger)
+
+	return track
+}
+
+func OnICEConnectionClose(c *KVMContext) {
+	if c.AudioTrack != nil {
+		close(c.AudioTrack.Stop)
+	}
+
+	if c.VideoTrack != nil {
+		close(c.VideoTrack.Stop)
+	}
+}
+
+func initWebRTC(c *KVMContext) {
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
+
+	c.PC, _ = webrtc.NewPeerConnection(config)
+
+	c.PC.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
+		c.Echo.Logger().Infof("OnIceConnectionStateChange: %s", s.String())
+
+		if s == webrtc.ICEConnectionStateClosed {
+			OnICEConnectionClose(c)
+		}
+	})
+
+	c.PC.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		if candidate != nil {
+			c.Echo.Logger().Debugf("OnIceCandidate: %s", candidate.String())
+			cJson, _ := json.Marshal(candidate.ToJSON())
+			req := WSRequest{
+				MessageType: "addIceCandidate",
+				Payload:     cJson,
+			}
+			websocket.JSON.Send(c.WS, req)
+		} else {
+			c.Echo.Logger().Debug("OnIceCandidate: compilete.")
+		}
+	})
+
+	c.AudioTrack = newTrackGst(
+		"audio",
+		"audio/opus",
+		"alsasrc device=hw:1 ! audio/x-raw,format=S16LE,rate=48000,channels=2 ! audioconvert ! opusenc",
+		c.Echo.Logger(),
+	)
+	c.PC.AddTrack(c.AudioTrack.Track)
+
+	c.VideoTrack = newTrackGst(
+		"video",
+		"video/h264",
+		"v4l2src device=/dev/video0 ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec ! videoconvert ! omxh264enc target-bitrate=3000000 control-rate=1",
+		c.Echo.Logger(),
+	)
+	c.PC.AddTrack(c.VideoTrack.Track)
+
+	offer, _ := c.PC.CreateOffer(nil)
+	c.PC.SetLocalDescription(offer)
+	sendOffer(c.WS, offer)
+}
+
+func onInitRequest(c *KVMContext, wsReq WSRequest) {
 	var r InitRequest
 	json.Unmarshal(wsReq.Payload, &r)
 
-	usbg = usbgadget.NewUSBGadget("g0")
-	if r.Mouse {
-		mouse = usbg.AddMouse("mouse")
+	if r.RemoteVideo {
+		initWebRTC(c)
 	}
-	if r.Keyboard {
-		keyboard = usbg.AddKeyboard("keyboard")
+
+	enableUsb := r.Keyboard || r.Mouse
+	if enableUsb {
+		c.Usb = usbgadget.NewUSBGadget("g0")
+		if r.Mouse {
+			c.Mouse = c.Usb.AddMouse("mouse")
+		}
+		if r.Keyboard {
+			c.Keyboard = c.Usb.AddKeyboard("keyboard")
+		}
+		c.Usb.Start()
 	}
-	usbg.Start()
 }
 
-func onMouseEvent(wsReq WSRequest) {
+func onMouseEvent(c *KVMContext, wsReq WSRequest) {
 	var e MouseEvent
 	json.Unmarshal(wsReq.Payload, &e)
-	if mouse != nil {
-		mouse.Send(e.Buttons, e.Pos.X, e.Pos.Y)
+
+	if c.Mouse != nil {
+		c.Mouse.Send(e.Buttons, e.Pos.X, e.Pos.Y)
 	}
 }
 
-func onKeyboardEvent(wsReq WSRequest) {
+func onKeyboardEvent(c *KVMContext, wsReq WSRequest) {
 	var e KeyboardEvent
 	json.Unmarshal(wsReq.Payload, &e)
 
-	keyboard.Send(e.Code, e.AltKey, e.CtrlKey, e.MetaKey, e.ShiftKey)
-	fmt.Println(e)
-}
-
-func onClose() {
-	if usbg != nil {
-		usbg.Stop()
+	if c.Keyboard != nil {
+		c.Keyboard.Send(e.Code, e.AltKey, e.CtrlKey, e.MetaKey, e.ShiftKey)
 	}
-	usbg = nil
-	mouse = nil
-	keyboard = nil
 }
 
-func wsHandler(ws *websocket.Conn, c echo.Context) {
-	defer ws.Close()
-	defer onClose()
+func onReceiveAnswer(c *KVMContext, wsReq WSRequest) {
+	var sdp webrtc.SessionDescription
+	json.Unmarshal(wsReq.Payload, &sdp)
+
+	if c.PC != nil {
+		c.PC.SetRemoteDescription(sdp)
+	}
+}
+
+func addIceCandidate(c *KVMContext, wsReq WSRequest) {
+	var candidate webrtc.ICECandidateInit
+	json.Unmarshal(wsReq.Payload, &candidate)
+
+	if c.PC != nil {
+		c.PC.AddICECandidate(candidate)
+	}
+}
+
+func onWSClose(c *KVMContext) {
+	c.WS.Close()
+
+	if c.PC != nil {
+		c.PC.Close()
+	}
+
+	if c.Usb != nil {
+		c.Usb.Stop()
+	}
+}
+
+func wsHandler(ws *websocket.Conn, e echo.Context) {
+	c := new(KVMContext)
+	c.WS = ws
+	c.Echo = e
+
+	defer onWSClose(c)
+
 	for {
 		var req WSRequest
-		err := websocket.JSON.Receive(ws, &req)
+		err := websocket.JSON.Receive(c.WS, &req)
 		if err != nil {
-			c.Logger().Error(err)
+			if err.Error() == "EOF" {
+				c.Echo.Logger().Info("WebSocket closed")
+			} else {
+				c.Echo.Logger().Error(err)
+			}
 			break
 		}
 
 		switch req.MessageType {
 		case "init":
-			onInitRequest(req)
+			onInitRequest(c, req)
 		case "mouseEvent":
-			onMouseEvent(req)
+			onMouseEvent(c, req)
 		case "keyEvent":
-			onKeyboardEvent(req)
+			onKeyboardEvent(c, req)
+		case "answer":
+			onReceiveAnswer(c, req)
+		case "addIceCandidate":
+			addIceCandidate(c, req)
 		case "keepAlive":
 			// NOP
 		default:
-			c.Logger().Error("Unknown type: " + req.MessageType)
+			c.Echo.Logger().Error("invalid message type: " + req.MessageType)
 		}
 	}
 }
@@ -106,14 +307,9 @@ func wsEndpoint(c echo.Context) error {
 	return nil
 }
 
-var (
-	usbg     *usbgadget.USBGadget
-	mouse    *usbgadget.USBGadgetMouse
-	keyboard *usbgadget.USBGadgetKeyboard
-)
-
 func main() {
 	e := echo.New()
+	e.Logger.SetLevel(log.INFO)
 	e.Use(middleware.Logger())
 	e.GET("/api/ws", wsEndpoint)
 	e.Logger.Fatal(e.Start(":1323"))

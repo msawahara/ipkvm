@@ -4,10 +4,22 @@
         <meta charset="UTF-8">
         <title>KVM over IP</title>
         <script type="text/javascript">
-            var ws = null; // WebSocket
+            /** @type {WebSocket} */
+            var ws = null;
+            /** @type {RTCPeerConnection} */
+            var pc = null;
+            /** @type {MediaStream} */
+            var ms = null;
             var statusText = null;
             var keepAliveTimer = null;
             var keepAliveCount = 0;
+
+            /** @type {RTCConfiguration} */
+            var pcConfig = {
+                iceServers: [
+                    {urls: 'stun:stun.l.google.com:19302'}
+                ]
+            }
 
             class KeyState {
                 constructor() {
@@ -218,11 +230,13 @@
                 ws = new WebSocket(wsEndpoint);
 
                 function initRequest() {
+                    var enableRemoteVideo = document.getElementById('enable-remote-video').checked;
                     var enableMouse = document.getElementById('enable-mouse').checked;
                     var enableKeyboard = document.getElementById('enable-keyboard').checked;
                     var req = {
                         type: "init",
                         payload: {
+                            remoteVideo: enableRemoteVideo,
                             mouse: enableMouse,
                             keyboard: enableKeyboard,
                         }
@@ -233,11 +247,35 @@
                 ws.onopen = () => {
                     setStatusText("WebSocket connected")
                     initRequest();
+
+                    keepAliveTimer = setInterval(keepAlive, 1000)
+ 
+                    var enableRemoteVideo = document.getElementById('enable-remote-video').checked;
+                    if (enableRemoteVideo) {
+                        pc = new RTCPeerConnection(pcConfig);
+                        pc.onicecandidate = onIceCandidate;
+                        pc.ontrack = onTrack;
+                        pc.oniceconnectionstatechange = (e) => {
+                            console.log("IceConnectionStateChange: " + pc.iceConnectionState);
+                            if (pc.iceConnectionState == "disconnected") {
+                                document.getElementById('remote-video').pause()
+                            }
+                        }
+                    }
                 };
 
                 ws.onmessage = (e) => {
-                    var msg = JSON.parse(e.data);
-                    console.log("onMessage: "+ msg);
+                    var m = JSON.parse(e.data);
+                    switch(m.type) {
+                        case "offer":
+                            onReceiveOffer(m.payload);
+                            break;
+                        case "addIceCandidate":
+                            addIceCandidate(m.payload);
+                            break;
+                        default:
+                            console.log("Unknown message: "+ m);
+                    }
                 };
 
                 ws.onerror = (e) => {
@@ -246,12 +284,80 @@
                     alert("An error has occurred.");
                 };
 
-                keepAliveTimer = setInterval(keepAlive, 1000)
-
                 keyState.Clear();
             }
 
+            /**
+             * @param {RTCTrackEvent} e
+             */
+            function onTrack(e){
+                console.log("onTrack");
+
+                if (ms === null) {
+                    ms = new MediaStream();
+                    document.getElementById('remote-video').srcObject = ms;
+                    document.getElementById('remote-video').play();
+                }
+
+                ms.addTrack(e.track);
+                return;
+            }
+
+            /**
+             * @param {RTCSessionDescriptionInit} sdp
+             */
+            function onReceiveOffer(sdp) {
+                pc.setRemoteDescription(new RTCSessionDescription(sdp)).then(function() {
+                    console.log("setRemoteDescription: success.");
+                    pc.createAnswer().then(function(answer) {
+                        console.log("createAnswer: success.");
+                        pc.setLocalDescription(answer);
+
+                        var request = {
+                            type: "answer",
+                            payload: answer,
+                        };
+                        wsSend(JSON.stringify(request));
+                    });
+                })
+            }
+
+            /**
+             * @param {RTCPeerConnectionIceEvent} e
+             */
+            function onIceCandidate(e) {
+                setStatusText("onIceCandidate");
+                if (e.candidate !== null) {
+                    var request = {
+                        type: "addIceCandidate",
+                        payload: e.candidate,
+                    };
+                    wsSend(JSON.stringify(request));
+                    return;
+                } else {
+                    console.log("onIceCandidate: complete.");
+                    setStatusText("connected.");
+                }
+            }
+
+            /**
+             * @param {RTCIceCandidateInit} c
+             */
+            function addIceCandidate(c) {
+                setStatusText("addIceCandidate");
+                console.log(c);
+                pc.addIceCandidate(c);
+            }
+
             function disconnect() {
+                if (ms) {
+                    for (var track of ms.getTracks()) {
+                        ms.removeTrack(track);
+                    }
+                    document.getElementById('remote-video').pause();
+                    document.getElementById('remote-video').srcObject = null;
+                    ms = null;
+                }
                 if (ws) {
                     ws.close();
                     ws = null;
@@ -350,7 +456,7 @@
             <input type="text" id="keyinput" class="keyinput">
         </div>
         <div id="video-box">
-            <video id="remote-video" class="remote-video" autoplay="" width="1280" height="720">
+            <video id="remote-video" class="remote-video" width="1280" height="720">
                 Your browser does not support the video tag.
             </video>
         </div>
@@ -359,9 +465,18 @@
             <button id="disconnect" onclick="disconnect();" disabled>disconnect</button>
             Status: <input id="status-text" class="status-text" disabled>
         </div>
-        <div id="config-box">
-            <input type="checkbox" id="enable-mouse" checked> mouse<br>
-            <input type="checkbox" id="enable-keyboard" checked> keyboard<br>
-        </div>
+        <details id="config-box">
+            <summary>configure</summary>
+            <fieldset>
+                <input type="checkbox" id="enable-remote-video" checked> remote-video<br>
+                <input type="checkbox" id="enable-remote-audio" checked> remote-audio<br>
+                <input type="checkbox" id="enable-mouse" checked> mouse (relative pos.)<br>
+                <input type="checkbox" id="enable-tablet"> tablet (absolute pos.)<br>
+                <input type="checkbox" id="enable-keyboard" checked> keyboard<br>
+                <input type="checkbox" id="enable-gamepad"> gamepad<br>
+                <input type="number" id="video-resolution-width" value="1280" min="320" max="1920" style="width: 4em;">x<input type="number" id="video-resolution-height" value="720" min="240" max="1080" style="width: 4em;"> video resolutoin (for streaming)<br>
+                <input type="number" id="screen-resolution-width" value="1280" min="320" max="1920" style="width: 4em;">x<input type="number" id="screen-resolution-height" value="720" min="240" max="1080" style="width: 4em;"> screen resolutoin (for tablet pos.)<br>                            
+            </fieldset>
+        </details>
     </body>
 </html>
