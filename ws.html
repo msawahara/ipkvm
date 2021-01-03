@@ -23,6 +23,9 @@
             var keepAliveCount = 0;
             /** @type {Array<RTCIceCandidateInit>} */
             var iceCandidates = [];
+            /** @type {Gamepad} */
+            var gamepad = null;
+            var gamepadTimer = null
 
             class KeyState {
                 constructor() {
@@ -249,6 +252,7 @@
                     var enableMouse = document.getElementById('enable-mouse').checked;
                     var enableMouseAbsolute = document.getElementById('enable-mouse-absolute').checked;
                     var enableKeyboard = document.getElementById('enable-keyboard').checked;
+                    var enableGamepad = document.getElementById('enable-gamepad').checked;
                     var videoResolutions = document.getElementById('video-resolution').value.split(',');
                     var videoWidth = parseInt(videoResolutions[0]);
                     var videoHeight = parseInt(videoResolutions[1]);
@@ -265,6 +269,7 @@
                             mouse: enableMouse,
                             mouseAbs: enableMouseAbsolute,
                             keyboard: enableKeyboard,
+                            gamepad: enableGamepad,
                         }
                     };
                     wsSend(JSON.stringify(req));
@@ -289,6 +294,12 @@
                                 document.getElementById('remote-video').pause()
                             }
                         }
+                    }
+
+                    var enableGamepad = document.getElementById('enable-gamepad').checked;
+                    if (enableGamepad) {
+                        const gamepadFps = 60;
+                        gamepadTimer = setInterval(onGamepadInterval, 1000 / gamepadFps);
                     }
                 };
 
@@ -389,6 +400,14 @@
             }
 
             function disconnect() {
+                if (gamepadTimer !== null) {
+                    clearInterval(gamepadTimer);
+                    gamepadTimer = null;
+                }
+                if (keepAliveTimer !== null) {
+                    clearInterval(keepAliveTimer);
+                    keepAliveTimer = null;
+                }
                 if (ms) {
                     for (var track of ms.getTracks()) {
                         ms.removeTrack(track);
@@ -469,6 +488,7 @@
                 video.addEventListener("loadedmetadata", onLoadedMetadata);
                 keyinput.addEventListener("keydown", onKeyDown);
                 keyinput.addEventListener("keyup", onKeyUp);
+                window.addEventListener("gamepadconnected", onGamepadConnected);
                 
                 statusText = document.getElementById('status-text');
             });
@@ -478,6 +498,25 @@
                     disconnect();
                 }
             };
+
+            /** @param {Event} e */
+            function onGamepadConnected(e) {
+                gamepad = e.gamepad;
+                console.log("onGamepadConnected: " + gamepad.id);
+            }
+
+            function onGamepadInterval() {
+                if (gamepad === null) {return;}
+                gamepad = navigator.getGamepads()[gamepad.index];
+                var request = {
+                    "type": "gamepadEvent",
+                    "payload": {
+                        "buttons": gamepad.buttons.map(b => b.pressed),
+                        "axes": gamepad.axes,
+                    }
+                }
+                wsSend(JSON.stringify(request));
+            }
 
             function onKeyEvent() {
                 var request = {
@@ -610,7 +649,7 @@
             <button id="fullscreen" onclick="fullscreen();">fullscreen</button>
         </div>
         <details id="config-box">
-            <summary>configure</summary>
+            <summary>configuration</summary>
             <fieldset>
                 <div id="config-items">
                     <input type="checkbox" id="enable-remote-video" checked> remote-video<br>

@@ -33,6 +33,11 @@ type MouseEvent struct {
 
 type MouseAbsEvent MouseEvent
 
+type GamepadEvent struct {
+	Buttons []bool    `json:"buttons"`
+	Axes    []float64 `json:"axes"`
+}
+
 type InitRequest struct {
 	RemoteVideo struct {
 		Enable    bool `json:"enable"`
@@ -43,6 +48,7 @@ type InitRequest struct {
 	Mouse    bool `json:"mouse"`
 	MouseAbs bool `json:"mouseAbs"`
 	Keyboard bool `json:"keyboard"`
+	Gamepad  bool `json:"gamepad"`
 }
 
 type WSRequest struct {
@@ -60,6 +66,7 @@ type KVMContext struct {
 	Mouse      *usbgadget.USBGadgetMouse
 	MouseAbs   *usbgadget.USBGadgetMouseAbsolute
 	Keyboard   *usbgadget.USBGadgetKeyboard
+	Gamepad    *usbgadget.USBGadgetGamePad
 	Echo       echo.Context
 	WS         *websocket.Conn
 	PC         *webrtc.PeerConnection
@@ -211,7 +218,7 @@ func onInitRequest(c *KVMContext, wsReq WSRequest) {
 		initWebRTC(c, r.RemoteVideo.Width, r.RemoteVideo.Height, r.RemoteVideo.Framerate)
 	}
 
-	enableUsb := r.Mouse || r.MouseAbs || r.Keyboard
+	enableUsb := r.Mouse || r.MouseAbs || r.Keyboard || r.Gamepad
 	if enableUsb {
 		c.Usb = usbgadget.NewUSBGadget("g0")
 		if r.Mouse {
@@ -222,6 +229,9 @@ func onInitRequest(c *KVMContext, wsReq WSRequest) {
 		}
 		if r.Keyboard {
 			c.Keyboard = c.Usb.AddKeyboard("keyboard")
+		}
+		if r.Gamepad {
+			c.Gamepad = c.Usb.AddGamePad("gamepad")
 		}
 		c.Usb.Start()
 	}
@@ -251,6 +261,15 @@ func onKeyboardEvent(c *KVMContext, wsReq WSRequest) {
 
 	if c.Keyboard != nil {
 		c.Keyboard.Send(e.Code, e.AltKey, e.CtrlKey, e.MetaKey, e.ShiftKey)
+	}
+}
+
+func onGamepadEvent(c *KVMContext, wsReq WSRequest) {
+	var e GamepadEvent
+	json.Unmarshal(wsReq.Payload, &e)
+
+	if c.Gamepad != nil {
+		c.Gamepad.Send(e.Buttons, e.Axes)
 	}
 }
 
@@ -312,6 +331,8 @@ func wsHandler(ws *websocket.Conn, e echo.Context) {
 			onMouseAbsEvent(c, req)
 		case "keyEvent":
 			onKeyboardEvent(c, req)
+		case "gamepadEvent":
+			onGamepadEvent(c, req)
 		case "answer":
 			onReceiveAnswer(c, req)
 		case "addIceCandidate":

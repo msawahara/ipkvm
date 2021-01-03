@@ -176,8 +176,8 @@ func (m *USBGadgetMouse) Send(buttons, x, y int) error {
 		return err
 	}
 
-	dx := int8(math.Max(math.Min(float64(x-m.X), 127), -128))
-	dy := int8(math.Max(math.Min(float64(y-m.Y), 127), -128))
+	dx := int8(math.Max(math.Min(float64(x-m.X), 127), -127))
+	dy := int8(math.Max(math.Min(float64(y-m.Y), 127), -127))
 
 	m.X = x
 	m.Y = y
@@ -204,6 +204,77 @@ func (m *USBGadgetMouseAbsolute) Send(buttons, x, y int) error {
 	report[2] = byte((x >> 8) & 0xff)
 	report[3] = byte(y & 0xff)
 	report[4] = byte((y >> 8) & 0xff)
+
+	err = ioutil.WriteFile(dev, report, 0600)
+
+	return err
+}
+
+func (m *USBGadgetGamePad) Send(buttons []bool, axes []float64) error {
+	dev, err := m.Device.Get()
+	if err != nil {
+		return err
+	}
+
+	// hat switch mapping (Up, Down, Left, Right)
+	hatSwitchMap := []int{12, 13, 14, 15}
+
+	// buttons mapping
+	buttonMap := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 16}
+
+	// make report buffer
+	report := make([]byte, 7)
+
+	// hat switch
+	var hatSwitch byte
+	for i, n := range hatSwitchMap {
+		if n >= len(buttons) {
+			continue
+		}
+		if buttons[n] == true {
+			hatSwitch |= 1 << i
+		}
+	}
+
+	var reportHat byte
+	switch hatSwitch {
+	case 0x01: // ___U
+		reportHat = 0x00
+	case 0x09: // R__U
+		reportHat = 0x01
+	case 0x08: // R___
+		reportHat = 0x02
+	case 0x0a: // R_D_
+		reportHat = 0x03
+	case 0x02: // __D_
+		reportHat = 0x04
+	case 0x06: // _LD_
+		reportHat = 0x05
+	case 0x04: // _L__
+		reportHat = 0x06
+	case 0x05: // _L_U
+		reportHat = 0x07
+	default:
+		reportHat = 0x0f
+	}
+
+	report[0] = reportHat
+
+	// buttons
+	for i, n := range buttonMap {
+		if n >= len(buttons) {
+			continue
+		}
+		if buttons[n] == true {
+			report[i/8+1] |= 1 << (i % 8)
+		}
+	}
+
+	// axes
+	reportAxes := axes[:min(4, len(axes))]
+	for i, v := range reportAxes {
+		report[3+i] = byte((v + 1) / 2 * 255)
+	}
 
 	err = ioutil.WriteFile(dev, report, 0600)
 
@@ -265,35 +336,37 @@ func (g USBGadget) AddMouseAbsolute(name string) *USBGadgetMouseAbsolute {
 	f.SubClass = USB_SUBCLASS_NO_SUBCLASS
 	f.ReportLength = 9
 	f.ReportDescriptor = []byte{
-		0x05, 0x01, //       [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
-		0x09, 0x02, //       [L] 09: Usage           (bSize = 1), 02: Mouse (in Generic Desktop Page)
-		0xa1, 0x01, //       [M] a1: Collection      (bSize = 1), 01: Application
+		0x05, 0x01, // [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
+		0x09, 0x02, // [L] 09: Usage           (bSize = 1), 02: Mouse (in Generic Desktop Page)
+		0xa1, 0x01, // [M] a1: Collection      (bSize = 1), 01: Application
 
-		0x09, 0x01, //       [L] 09: Usage           (bSize = 1), 01: Pointer (in Generic Desktop Page)
-		0xa1, 0x00, //       [M] a1: Collection      (bSize = 1), 00: Physical
+		0x09, 0x01, // [L] 09: Usage           (bSize = 1), 01: Pointer (in Generic Desktop Page)
+		0xa1, 0x00, // [M] a1: Collection      (bSize = 1), 00: Physical
 
 		// Input: buttons, 1 byte (1 bit/field * 3 fields + padding)
-		0x95, 0x03, //       [G] 95: Report Count    (bSize = 1), 08: 3 fields
-		0x75, 0x01, //       [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
-		0x05, 0x09, //       [G] 05: Usage Page      (bSize = 1), 09: Button
-		0x19, 0x01, //       [L] 19: Usage Minimum   (bSize = 1), 01: Button 1, Selector (in Keyboard/Keypad Page)
-		0x29, 0x03, //       [L] 29: Usage Maximum   (bSize = 1), 03: Button 3, Selector (in Keyboard/Keypad Page)
-		0x15, 0x00, //       [G] 15: Logical Minimum (bSize = 1), 00: min is 0
-		0x25, 0x01, //       [G] 25: Logical Maximum (bSize = 1), 01: max is 1
-		0x81, 0x02, //       [M] 81: Input           (bSize = 1), 02: Variable, Data, Absolute
-		0x95, 0x01, //       [G] 95: Report Count    (bSize = 1), 08: 1 fields
-		0x75, 0x05, //       [G] 75: Report Size     (bSize = 1), 01: 5 bits/field
-		0x81, 0x01, //       [M] 81: Input           (bSize = 1), 03: Constant (for padding)
+		0x05, 0x09, // [G] 05: Usage Page      (bSize = 1), 09: Button
+		0x19, 0x01, // [L] 19: Usage Minimum   (bSize = 1), 01: Button 1, Selector (in Keyboard/Keypad Page)
+		0x29, 0x03, // [L] 29: Usage Maximum   (bSize = 1), 03: Button 3, Selector (in Keyboard/Keypad Page)
+		0x15, 0x00, // [G] 15: Logical Minimum (bSize = 1), 00: min is 0
+		0x25, 0x01, // [G] 25: Logical Maximum (bSize = 1), 01: max is 1
+		0x75, 0x01, // [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
+		0x95, 0x03, // [G] 95: Report Count    (bSize = 1), 08: 3 fields
+		0x81, 0x02, // [M] 81: Input           (bSize = 1), 02: Variable, Data, Absolute
+		0x75, 0x05, // [G] 75: Report Size     (bSize = 1), 01: 5 bits/field
+		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 08: 1 fields
+		0x81, 0x01, // [M] 81: Input           (bSize = 1), 03: Constant (for padding)
 
 		// Input: X, Y, 4 byte (16 its/field * 2 fields)
-		0x75, 0x10, //       [G] 75: Report Size     (bSize = 1), 10: 16 bits/field
-		0x95, 0x02, //       [G] 95: Report Count    (bSize = 1), 02: 2 fields
-		0x05, 0x01, //       [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
-		0x09, 0x30, //       [L] 09: Usage           (bSize = 1), 30: X, Dynamic Value (in Generic Desktop Page)
-		0x09, 0x31, //       [L] 09: Usage           (bSize = 1), 31: Y, Dynamic Value (in Generic Desktop Page)
-		0x16, 0x00, 0x00, // [G] 16: Logical Minimum (bSize = 2), 0000: min is 0
-		0x26, 0xff, 0x7f, // [G] 26: Logical Maximum (bSize = 2), 7fff: max is 32767
-		0x81, 0x02, //       [M] 81: Input           (bSize = 1), 02: Variable, Data, Absolute
+		0x05, 0x01, // [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
+		0x09, 0x30, // [L] 09: Usage           (bSize = 1), 30: X, Dynamic Value (in Generic Desktop Page)
+		0x09, 0x31, // [L] 09: Usage           (bSize = 1), 31: Y, Dynamic Value (in Generic Desktop Page)
+		0x16,       // [G] 16: Logical Minimum (bSize = 2),
+		0x00, 0x00, //                                      0000: min is 0
+		0x26,       // [G] 26: Logical Maximum (bSize = 2),
+		0xff, 0x7f, //                                      7fff: max is 32767
+		0x75, 0x10, // [G] 75: Report Size     (bSize = 1), 10: 16 bits/field
+		0x95, 0x02, // [G] 95: Report Count    (bSize = 1), 02: 2 fields
+		0x81, 0x02, // [M] 81: Input           (bSize = 1), 02: Variable, Data, Absolute
 
 		0xc0, //       [M] c0: End Collection
 		0xc0, //       [M] c0: End Collection
@@ -318,39 +391,39 @@ func (g USBGadget) AddKeyboard(name string) *USBGadgetKeyboard {
 		0xa1, 0x01, // [M] a1: Collection      (bSize = 1), 01: Application
 
 		// Input: modifier keys, 1 byte (1 bit/field * 8 fields)
-		0x75, 0x01, // [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
-		0x95, 0x08, // [G] 95: Report Count    (bSize = 1), 08: 8 fields
 		0x05, 0x07, // [G] 05: Usage Page      (bSize = 1), 07: Keyboard/Keypad
 		0x19, 0xe0, // [L] 19: Usage Minimum   (bSize = 1), e0: Keyboard LeftControl, Dynamic Flag (in Keyboard/Keypad Page)
 		0x29, 0xe7, // [L] 29: Usage Maximum   (bSize = 1), e7: Keyboard Right GUI,   Dynamic Flag (in Keyboard/Keypad Page)
 		0x15, 0x00, // [G] 15: Logical Minimum (bSize = 1), 00: min is 0
 		0x25, 0x01, // [G] 25: Logical Maximum (bSize = 1), 01: max is 1
+		0x75, 0x01, // [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
+		0x95, 0x08, // [G] 95: Report Count    (bSize = 1), 08: 8 fields
 		0x81, 0x02, // [M] 81: Input           (bSize = 1), 02: Variable, Data, Absolute
 
 		// Input: padding, 1 byte
-		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 01: 1 fields
 		0x75, 0x08, // [G] 75: Report Size     (bsize = 1), 08: 8bits/field
+		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 01: 1 fields
 		0x81, 0x03, // [M] 81: Input           (bSize = 1), 03: Constant (for padding)
 
 		// Output: LED status, 1 byte (1 bit/field * 5 fields + padding)
-		0x95, 0x05, // [G] 95: Report Count    (bSize = 1), 01: 5 fields
-		0x75, 0x01, // [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
 		0x05, 0x08, // [G] 05: Usage Page      (bSize = 1), 08: LED
 		0x19, 0x01, // [L] 19: Usage Minimum   (bSize = 1), 01: Num Lock (in LED Page)
 		0x29, 0x05, // [L] 29: Usage Maximum   (bSize = 1), 05: Kana     (in LED Page)
+		0x75, 0x01, // [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
+		0x95, 0x05, // [G] 95: Report Count    (bSize = 1), 01: 5 fields
 		0x91, 0x02, // [M] 91: Output          (bSize = 1), 02: Variable, Data, Absoute
-		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 01: 1 fields
 		0x75, 0x03, // [G] 75: Report Size     (bsize = 1), 03: 3 bits/field
+		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 01: 1 fields
 		0x91, 0x03, // [M] 91: Output          (bSize = 1), 03: Constant (for padding)
 
 		// Input: selected keys, 6 byte (8 bits/field * 6 fields)
-		0x95, 0x06, // [G] 95: Report Count    (bSize = 1), 06: 6 fields
-		0x75, 0x08, // [G] 75: Report Size     (bsize = 1), 08: 8 bits/field
-		0x15, 0x00, // [G] 15: Logical Minimum (bSize = 1), 00: min is 0
-		0x25, 0x65, // [G] 25: Logical Maximum (bSize = 1), 65: max is 101
 		0x05, 0x07, // [G] 05: Usage Page      (bSize = 1), 07: Keyboard/Keypad
 		0x19, 0x00, // [L] 19: Usage Minimum   (bSize = 1), 00: Reserved (no event indicated), Selector (in Keyboard/Keypad Page)
 		0x29, 0x65, // [L] 19: Usage Maximum   (bSize = 1), 65: Keyboard Application,          Selector (in Keyboard/Keypad Page)
+		0x15, 0x00, // [G] 15: Logical Minimum (bSize = 1), 00: min is 0
+		0x25, 0x65, // [G] 25: Logical Maximum (bSize = 1), 65: max is 101
+		0x75, 0x08, // [G] 75: Report Size     (bsize = 1), 08: 8 bits/field
+		0x95, 0x06, // [G] 95: Report Count    (bSize = 1), 06: 6 fields
 		0x81, 0x00, // [M] 81: Input           (bSize = 1), 00: Array, Data
 
 		0xc0, //       [M] c0: End Collection
@@ -369,12 +442,66 @@ func (g USBGadget) AddGamePad(name string) *USBGadgetGamePad {
 	f.Type = "hid"
 	f.Protocol = USB_PROTOCOL_NONE
 	f.SubClass = USB_SUBCLASS_NO_SUBCLASS
-	f.ReportLength = 8
+	f.ReportLength = 7
 	f.ReportDescriptor = []byte{
-		0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01,
-		0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x03, 0x95, 0x05, 0x75, 0x01,
-		0x05, 0x08, 0x19, 0x01, 0x29, 0x05, 0x91, 0x02, 0x95, 0x01, 0x75, 0x03, 0x91, 0x03, 0x95, 0x06,
-		0x75, 0x08, 0x15, 0x00, 0x25, 0x65, 0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00, 0xc0,
+		0x05, 0x01, // [G] 05: Usage Page       (bSize = 1), 01: Generic Desktop
+		0x09, 0x04, // [L] 09: Usage            (bSize = 1), 04: Game Controls (in Generic Desktop Page)
+		0xa1, 0x01, // [M] a1: Collection       (bSize = 1), 01: Application
+
+		0x09, 0x01, // [L] 09: Usage            (bSize = 1), 01: Pointer (in Generic Desktop Page)
+		0xa1, 0x00, // [M] a1: Collection       (bSize = 1), 00: Physical
+
+		// Input: hat switch, 1 byte (4bit/field * 1 fields + padding)
+		0x05, 0x01, // [G] 05: Usage Page       (bSize = 1), 01: Generic Desktop
+		0x09, 0x39, // [L] 09: Usage            (bSize = 1), 39: Hat switch (in Generic Desktop Page)
+		0x15, 0x00, // [G] 15: Logical Minimum  (bSize = 1), 00: min is 0
+		0x25, 0x07, // [G] 25: Logical Maximum  (bSize = 1), 01: max is 7
+		0x35, 0x00, // [G] 35: Physical Minimum (bSize = 1), 00: min is 0
+		0x46,       // [G] 46: Physical Maximum (bSize = 2),
+		0x3b, 0x01, //                                       01: max is 315
+		0x65, 0x14, // [G] 65: Unit             (bSize = 1), 14: Degrees
+		0x75, 0x04, // [G] 75: Report Size      (bSize = 1), 04: 4 bits/field
+		0x95, 0x01, // [G] 95: Report Count     (bSize = 1), 01: 1 fields
+		0x81, 0x02, // [M] 81: Input            (bSize = 1), 42: Variable, Data, Absolute, Null
+
+		0x95, 0x01, // [G] 95: Report Count     (bSize = 1), 01: 1 fields
+		0x75, 0x04, // [G] 75: Report Size      (bSize = 1), 04: 4 bits/field
+		0x81, 0x01, // [M] 81: Input            (bSize = 1), 03: Constant (for padding)
+
+		// Input: buttons, 2 byte (1 bit/field * 13 fields + padding)
+		0x05, 0x09, // [G] 05: Usage Page       (bSize = 1), 09: Button
+		0x19, 0x01, // [L] 19: Usage Minimum    (bSize = 1), 01: Button  1 (in Button Page)
+		0x29, 0x0d, // [L] 29: Usage Maximum    (bSize = 1), 0d: Button 13 (in Button Page)
+		0x15, 0x00, // [G] 15: Logical Minimum  (bSize = 1), 00: min is 0
+		0x25, 0x01, // [G] 25: Logical Maximum  (bSize = 1), 01: max is 1
+		0x35, 0x00, // [G] 35: Physical Minimum (bSize = 1), 00: min is 0
+		0x45, 0x01, // [G] 45: Physical Maximum (bSize = 1), 01: max is 1
+		0x65, 0x14, // [G] 65: Unit             (bSize = 1), 00: None
+		0x75, 0x01, // [G] 75: Report Size      (bSize = 1), 01:  1 bits/field
+		0x95, 0x0d, // [G] 95: Report Count     (bSize = 1), 0d: 13 fields
+		0x81, 0x02, // [M] 81: Input            (bSize = 1), 02: Variable, Data, Absolute
+
+		0x95, 0x01, // [G] 95: Report Count     (bSize = 1), 01: 1 fields
+		0x75, 0x03, // [G] 75: Report Size      (bSize = 1), 03: 3 bits/field
+		0x81, 0x01, // [M] 81: Input            (bSize = 1), 03: Constant (for padding)
+
+		// Input: X, Y, Z, Rz 4 byte (8 bits/field * 4 fields)
+		0x05, 0x01, // [G] 05: Usage Page       (bSize = 1), 01: Generic Desktop
+		0x09, 0x30, // [L] 09: Usage            (bSize = 1), 30: X, Dynamic Value (in Generic Desktop Page)
+		0x09, 0x31, // [L] 09: Usage            (bSize = 1), 31: Y, Dynamic Value (in Generic Desktop Page)
+		0x09, 0x32, // [L] 09: Usage            (bSize = 1), 32: Z, Dynamic Value (in Generic Desktop Page)
+		0x09, 0x35, // [L] 09: Usage            (bSize = 1), 35: Rz, Dynamic Value (in Generic Desktop Page)
+		0x15, 0x00, // [G] 16: Logical Minimum  (bSize = 1), 00: min is 0
+		0x25, 0xff, // [G] 26: Logical Maximum  (bSize = 1), ff: max is 255
+		0x35, 0x00, // [G] 35: Physical Minimum (bSize = 1), 00: min is 0
+		0x45, 0xff, // [G] 45: Physical Maximum (bSize = 1), ff: max is 255
+		0x75, 0x08, // [G] 75: Report Size      (bSize = 1), 08: 8 bits/field
+		0x95, 0x04, // [G] 95: Report Count     (bSize = 1), 04: 4 fields
+		0x81, 0x02, // [M] 81: Input            (bSize = 1), 02: Variable, Data, Absolute
+
+		0xc0, //       [M] c0: End Collection
+
+		0xc0, //       [M] c0: End Collection
 	}
 	g.AddFunction(name, f)
 
