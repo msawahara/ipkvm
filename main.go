@@ -193,7 +193,7 @@ func initWebRTC(c *KVMContext, width, height, framerate int) {
 	c.VideoTrack = newTrackGst(
 		"video",
 		"video/h264",
-		fmt.Sprintf("v4l2src device=/dev/video0 ! image/jpeg,width=%d,height=%d,framerate=%d/1 ! jpegdec ! videoconvert ! omxh264enc target-bitrate=3000000 control-rate=1", width, height, framerate),
+		fmt.Sprintf("v4l2src device=/dev/video0 ! image/jpeg,width=%d,height=%d,framerate=%d/1 ! jpegdec ! videobalance brightness=0.053887 contrast=0.858824 saturation=0.875 ! videoconvert ! omxh264enc target-bitrate=3000000 control-rate=1", width, height, framerate),
 		c.Echo.Logger(),
 	)
 	c.PC.AddTrack(c.VideoTrack.Track)
