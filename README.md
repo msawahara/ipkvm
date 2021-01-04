@@ -34,7 +34,9 @@ sudo apt install gstreamer1.0-omx gstreamer1.0-alsa gstreamer1.0-plugins-base gs
 
 Install ipkvm
 ```bash
-GO111MODULE=on go get github.com/msawahara/ipkvm
+mkdir -p $(go env GOPATH)/src/github.com/msawahara/ipkvm
+git clone https://github.com/msawahara/ipkvm.git $(go env GOPATH)/src/github.com/msawahara/ipkvm
+(cd $(go env GOPATH)/src/github.com/msawahara/ipkvm && go install)
 ```
 
 Register systemd service
@@ -48,6 +50,7 @@ After=network.target
 Type=simple
 ExecStartPre=$(which modprobe) uvcvideo
 ExecStart=$(go env GOPATH)/bin/ipkvm
+WorkingDirectory=$(go env GOPATH)/src/github.com/msawahara/ipkvm
 
 [Install]
 WantedBy=multi-user.target
