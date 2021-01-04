@@ -355,5 +355,6 @@ func main() {
 	e.Logger.SetLevel(log.INFO)
 	e.Use(middleware.Logger())
 	e.GET("/api/ws", wsEndpoint)
+	e.File("/", "kvm.html")
 	e.Logger.Fatal(e.Start(":1323"))
 }
