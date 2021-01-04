@@ -87,3 +87,6 @@ sudo systemctl enable --now ipkvm
 ```
 
 The KVM console can be accessed at `http://<ip-addr>:1323/`.
+
+## Note
+- Gamepad API is only available in secure contexts (starting with https:// or localhost). [more info.](https://hacks.mozilla.org/2020/07/securing-gamepad-api/)
