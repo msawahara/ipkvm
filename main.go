@@ -32,6 +32,7 @@ type MouseEvent struct {
 }
 
 type MouseAbsEvent MouseEvent
+type TouchEvent MouseEvent
 
 type GamepadEvent struct {
 	Buttons []bool    `json:"buttons"`
@@ -45,10 +46,11 @@ type InitRequest struct {
 		Height    int  `json:"height"`
 		Framerate int  `json:"framerate"`
 	} `json:"remoteVideo"`
-	Mouse    bool `json:"mouse"`
-	MouseAbs bool `json:"mouseAbs"`
-	Keyboard bool `json:"keyboard"`
-	Gamepad  bool `json:"gamepad"`
+	Mouse       bool `json:"mouse"`
+	MouseAbs    bool `json:"mouseAbs"`
+	TouchScreen bool `json:"touchScreen"`
+	Keyboard    bool `json:"keyboard"`
+	Gamepad     bool `json:"gamepad"`
 }
 
 type WSRequest struct {
@@ -62,16 +64,17 @@ type TrackContext struct {
 }
 
 type KVMContext struct {
-	Usb        *usbgadget.USBGadget
-	Mouse      *usbgadget.USBGadgetMouse
-	MouseAbs   *usbgadget.USBGadgetMouseAbsolute
-	Keyboard   *usbgadget.USBGadgetKeyboard
-	Gamepad    *usbgadget.USBGadgetGamePad
-	Echo       echo.Context
-	WS         *websocket.Conn
-	PC         *webrtc.PeerConnection
-	AudioTrack *TrackContext
-	VideoTrack *TrackContext
+	Usb         *usbgadget.USBGadget
+	Mouse       *usbgadget.USBGadgetMouse
+	MouseAbs    *usbgadget.USBGadgetMouseAbsolute
+	TouchScreen *usbgadget.USBGadgetTouchScreen
+	Keyboard    *usbgadget.USBGadgetKeyboard
+	Gamepad     *usbgadget.USBGadgetGamePad
+	Echo        echo.Context
+	WS          *websocket.Conn
+	PC          *webrtc.PeerConnection
+	AudioTrack  *TrackContext
+	VideoTrack  *TrackContext
 }
 
 func sendOffer(ws *websocket.Conn, offer webrtc.SessionDescription) error {
@@ -218,7 +221,7 @@ func onInitRequest(c *KVMContext, wsReq WSRequest) {
 		initWebRTC(c, r.RemoteVideo.Width, r.RemoteVideo.Height, r.RemoteVideo.Framerate)
 	}
 
-	enableUsb := r.Mouse || r.MouseAbs || r.Keyboard || r.Gamepad
+	enableUsb := r.Mouse || r.MouseAbs || r.TouchScreen || r.Keyboard || r.Gamepad
 	if enableUsb {
 		c.Usb = usbgadget.NewUSBGadget("g0")
 		if r.Mouse {
@@ -226,6 +229,9 @@ func onInitRequest(c *KVMContext, wsReq WSRequest) {
 		}
 		if r.MouseAbs {
 			c.MouseAbs = c.Usb.AddMouseAbsolute("mouseAbs")
+		}
+		if r.TouchScreen {
+			c.TouchScreen = c.Usb.AddTouchScreen("touchScreen")
 		}
 		if r.Keyboard {
 			c.Keyboard = c.Usb.AddKeyboard("keyboard")
@@ -252,6 +258,15 @@ func onMouseAbsEvent(c *KVMContext, wsReq WSRequest) {
 
 	if c.MouseAbs != nil {
 		c.MouseAbs.Send(e.Buttons, e.Pos.X, e.Pos.Y)
+	}
+}
+
+func onTouchEvent(c *KVMContext, wsReq WSRequest) {
+	var e TouchEvent
+	json.Unmarshal(wsReq.Payload, &e)
+
+	if c.TouchScreen != nil {
+		c.TouchScreen.Send(e.Buttons, e.Pos.X, e.Pos.Y)
 	}
 }
 
@@ -299,6 +314,12 @@ func onWSClose(c *KVMContext) {
 	}
 
 	if c.Usb != nil {
+		c.Mouse = nil
+		c.MouseAbs = nil
+		c.TouchScreen = nil
+		c.Keyboard = nil
+		c.Gamepad = nil
+
 		c.Usb.Stop()
 	}
 }
@@ -329,6 +350,8 @@ func wsHandler(ws *websocket.Conn, e echo.Context) {
 			onMouseEvent(c, req)
 		case "mouseAbsEvent":
 			onMouseAbsEvent(c, req)
+		case "touchEvent":
+			onTouchEvent(c, req)
 		case "keyEvent":
 			onKeyboardEvent(c, req)
 		case "gamepadEvent":

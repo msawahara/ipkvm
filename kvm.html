@@ -251,6 +251,7 @@
                     var enableRemoteVideo = document.getElementById('enable-remote-video').checked;
                     var enableMouse = document.getElementById('enable-mouse').checked;
                     var enableMouseAbsolute = document.getElementById('enable-mouse-absolute').checked;
+                    var enableTouchScreen = document.getElementById('enable-touch-screen').checked;
                     var enableKeyboard = document.getElementById('enable-keyboard').checked;
                     var enableGamepad = document.getElementById('enable-gamepad').checked;
                     var videoResolutions = document.getElementById('video-resolution').value.split(',');
@@ -268,6 +269,7 @@
                             },
                             mouse: enableMouse,
                             mouseAbs: enableMouseAbsolute,
+                            touchScreen: enableTouchScreen,
                             keyboard: enableKeyboard,
                             gamepad: enableGamepad,
                         }
@@ -559,6 +561,8 @@
             function onMouseEvent(e) {
                 var enableMouse = document.getElementById('enable-mouse').checked;
                 var enableMouseAbsolute = document.getElementById('enable-mouse-absolute').checked;
+                var enableTouchScreen = document.getElementById('enable-touch-screen').checked;
+
                 if (enableMouse) {
                     var request = {
                         "type": "mouseEvent",
@@ -599,6 +603,43 @@
 
                     var request = {
                         "type": "mouseAbsEvent",
+                        "payload": {
+                            "buttons": e.buttons,
+                            "pos": {
+                                "x": x,
+                                "y": y,
+                            }
+                        }
+                    }
+
+                    wsSend(JSON.stringify(request));
+                } else if (enableTouchScreen) {
+                    const reportMin = 0;
+                    const reportMax = 32767;
+
+                    /** @type {HTMLVideoElement} */
+                    var videoElement = document.getElementById('remote-video');
+                    var offsetWidth = videoElement.offsetWidth;
+                    var offsetHeight = videoElement.offsetHeight;
+                    var videoWidth = videoElement.videoWidth;
+                    var videoHeight = videoElement.videoHeight;
+
+                    // width and height returns zero if no media is loaded
+                    if (videoWidth == 0 || videoHeight == 0) {return;}
+
+                    var videoZoom = Math.min(offsetWidth / videoWidth, offsetHeight / videoHeight);
+
+                    var offsetLeft = (offsetWidth - videoWidth * videoZoom) / 2;
+                    var offsetTop = (offsetHeight - videoHeight * videoZoom) / 2;
+
+                    var x = Math.round((e.offsetX - offsetLeft) / (videoWidth * videoZoom - 1) * reportMax);
+                    var y = Math.round((e.offsetY - offsetTop) / (videoHeight * videoZoom - 1) * reportMax);
+
+                    if (x < reportMin || reportMax < x) {return;}
+                    if (y < reportMin || reportMax < y) {return;}
+
+                    var request = {
+                        "type": "touchEvent",
                         "payload": {
                             "buttons": e.buttons,
                             "pos": {
@@ -654,8 +695,9 @@
                 <div id="config-items">
                     <input type="checkbox" id="enable-remote-video" checked> remote-video<br>
                     <input type="checkbox" id="enable-remote-audio" checked> remote-audio<br>
-                    <input type="checkbox" id="enable-mouse"> mouse (relative pos. for BIOS.)<br>
+                    <input type="checkbox" id="enable-mouse"> mouse (relative pos., for BIOS)<br>
                     <input type="checkbox" id="enable-mouse-absolute" checked> mouse (absolute pos.)<br>
+                    <input type="checkbox" id="enable-touch-screen"> touch screen<br>
                     <input type="checkbox" id="enable-keyboard" checked> keyboard<br>
                     <input type="checkbox" id="enable-gamepad"> gamepad<br>
                     <select name="video-resolution" id="video-resolution">
