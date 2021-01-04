@@ -254,10 +254,15 @@
                     var enableTouchScreen = document.getElementById('enable-touch-screen').checked;
                     var enableKeyboard = document.getElementById('enable-keyboard').checked;
                     var enableGamepad = document.getElementById('enable-gamepad').checked;
+
                     var videoResolutions = document.getElementById('video-resolution').value.split(',');
                     var videoWidth = parseInt(videoResolutions[0]);
                     var videoHeight = parseInt(videoResolutions[1]);
                     var videoFramerate = parseInt(videoResolutions[2]);
+
+                    /* advanced configuration */
+                    var videoTargetBitrate = parseInt(document.getElementById('video-target-bitrate-kbps').value);
+
                     var req = {
                         type: "init",
                         payload: {
@@ -266,6 +271,7 @@
                                 width: videoWidth,
                                 height: videoHeight,
                                 framerate: videoFramerate,
+                                targetBitrate: videoTargetBitrate,
                             },
                             mouse: enableMouse,
                             mouseAbs: enableMouseAbsolute,
@@ -436,9 +442,22 @@
 
             /** @param {boolean} lock */
             function configLock(lock) {
-                for (var e of document.getElementById('config-items').children) {
-                    if (e.nodeName !== "INPUT" && e.nodeName !== "SELECT") {continue;}
-                    e.disabled = lock;
+                formLockInChildren(document.getElementById('config-items'), lock);
+            }
+
+            /**
+             * @param {HTMLElement} e
+             * @param {boolean} lock
+             * */
+            function formLockInChildren(e, lock) {
+                for (var c of e.children) {
+                    if (c.children.length > 0) {
+                        formLockInChildren(c, lock);
+                    }
+                    if (c.nodeName !== "INPUT" && e.nodeName !== "SELECT") {
+                        continue;
+                    }
+                    c.disabled = lock;
                 }
             }
 
@@ -693,14 +712,13 @@
             <summary>configuration</summary>
             <fieldset>
                 <div id="config-items">
-                    <input type="checkbox" id="enable-remote-video" checked> remote-video<br>
-                    <input type="checkbox" id="enable-remote-audio" checked> remote-audio<br>
+                    <input type="checkbox" id="enable-remote-video" checked> remote-video (with audio)<br>
                     <input type="checkbox" id="enable-mouse"> mouse (relative pos., for BIOS)<br>
                     <input type="checkbox" id="enable-mouse-absolute" checked> mouse (absolute pos.)<br>
                     <input type="checkbox" id="enable-touch-screen"> touch screen<br>
                     <input type="checkbox" id="enable-keyboard" checked> keyboard<br>
                     <input type="checkbox" id="enable-gamepad"> gamepad<br>
-                    <select name="video-resolution" id="video-resolution">
+                    <select id="video-resolution">
                         <option value="1920,1080,30">(16:9) 1920 x 1080, 30 fps</option>
                         <option value="1280,720,60">(16:9) 1280 x 720, 60 fps</option>
                         <option value="1280,720,30" selected>(16:9) 1280 x 720, 30 fps</option>
@@ -713,6 +731,13 @@
                         <option value="640,480,30">(4:3) 640 x 480, 30 fps</option>
                         <option value="1280,1024,30">(5:4) 1280 x 1024, 30 fps</option>
                     </select> video resolutoin (for streaming)<br>
+
+                    <details id="advanced-config-box">
+                        <summary>advanced</summary>
+                        <fieldset>
+                            <input type="number" id="video-target-bitrate-kbps" value="3000" min="100" max="25000"> video target bitrate (kbps, 100 - 25000)
+                        </fieldset>
+                    </details>
                 </div>
             </fieldset>
         </details>

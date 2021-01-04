@@ -39,18 +39,21 @@ type GamepadEvent struct {
 	Axes    []float64 `json:"axes"`
 }
 
+type VideoRequest struct {
+	Enable        bool `json:"enable"`
+	Width         int  `json:"width"`
+	Height        int  `json:"height"`
+	Framerate     int  `json:"framerate"`
+	TargetBitrate int  `json:"targetBitrate"`
+}
+
 type InitRequest struct {
-	RemoteVideo struct {
-		Enable    bool `json:"enable"`
-		Width     int  `json:"width"`
-		Height    int  `json:"height"`
-		Framerate int  `json:"framerate"`
-	} `json:"remoteVideo"`
-	Mouse       bool `json:"mouse"`
-	MouseAbs    bool `json:"mouseAbs"`
-	TouchScreen bool `json:"touchScreen"`
-	Keyboard    bool `json:"keyboard"`
-	Gamepad     bool `json:"gamepad"`
+	RemoteVideo VideoRequest `json:"remoteVideo"`
+	Mouse       bool         `json:"mouse"`
+	MouseAbs    bool         `json:"mouseAbs"`
+	TouchScreen bool         `json:"touchScreen"`
+	Keyboard    bool         `json:"keyboard"`
+	Gamepad     bool         `json:"gamepad"`
 }
 
 type WSRequest struct {
@@ -159,7 +162,7 @@ func OnICEConnectionClose(c *KVMContext) {
 	}
 }
 
-func initWebRTC(c *KVMContext, width, height, framerate int) {
+func initWebRTC(c *KVMContext, v VideoRequest) {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -203,7 +206,18 @@ func initWebRTC(c *KVMContext, width, height, framerate int) {
 	c.VideoTrack = newTrackGst(
 		"video",
 		"video/h264",
-		fmt.Sprintf("v4l2src device=/dev/video0 ! image/jpeg,width=%d,height=%d,framerate=%d/1 ! jpegdec ! videobalance brightness=0.053887 contrast=0.858824 saturation=0.875 ! videoconvert ! omxh264enc target-bitrate=3000000 control-rate=1", width, height, framerate),
+		fmt.Sprintf(
+			"v4l2src device=/dev/video0"+
+				" ! image/jpeg,width=%d,height=%d,framerate=%d/1"+
+				" ! jpegdec"+
+				" ! videobalance brightness=0.053887 contrast=0.858824 saturation=0.875"+
+				" ! videoconvert"+
+				" ! omxh264enc target-bitrate=%d control-rate=1",
+			v.Width,
+			v.Height,
+			v.Framerate,
+			v.TargetBitrate*1000,
+		),
 		c.Echo.Logger(),
 	)
 	c.PC.AddTrack(c.VideoTrack.Track)
@@ -218,7 +232,7 @@ func onInitRequest(c *KVMContext, wsReq WSRequest) {
 	json.Unmarshal(wsReq.Payload, &r)
 
 	if r.RemoteVideo.Enable {
-		initWebRTC(c, r.RemoteVideo.Width, r.RemoteVideo.Height, r.RemoteVideo.Framerate)
+		initWebRTC(c, r.RemoteVideo)
 	}
 
 	enableUsb := r.Mouse || r.MouseAbs || r.TouchScreen || r.Keyboard || r.Gamepad
