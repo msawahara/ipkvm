@@ -203,6 +203,10 @@ func initWebRTC(c *KVMContext, v VideoRequest) {
 	)
 	c.PC.AddTrack(c.AudioTrack.Track)
 
+	blockSize := 16
+	widthPad := (blockSize - (v.Width % blockSize)) % blockSize
+	heightPad := (blockSize - (v.Height % blockSize)) % blockSize
+
 	c.VideoTrack = newTrackGst(
 		"video",
 		"video/h264",
@@ -211,11 +215,14 @@ func initWebRTC(c *KVMContext, v VideoRequest) {
 				" ! image/jpeg,width=%d,height=%d,framerate=%d/1"+
 				" ! jpegdec"+
 				" ! videobalance brightness=0.053887 contrast=0.858824 saturation=0.875"+
+				" ! videobox right=%d bottom=%d"+
 				" ! videoconvert"+
 				" ! omxh264enc target-bitrate=%d control-rate=1",
 			v.Width,
 			v.Height,
 			v.Framerate,
+			-widthPad,
+			-heightPad,
 			v.TargetBitrate*1000,
 		),
 		c.Echo.Logger(),

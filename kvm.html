@@ -472,27 +472,39 @@
             }
 
             function resizeVideo() {
-                if (document.fullscreenElement) {
-                    // fullscreen
-                    /** @type {HTMLVideoElement} */
-                    var video = document.getElementById('remote-video');
-                    video.width = document.getElementById('screen-box').offsetWidth;
-                    video.height = document.getElementById('screen-box').offsetHeight;
-                } else {
-                    // not fullscreen
-                    var video = document.getElementById('remote-video');
-                    if (video.videoHeight == 0 || video.videoWidth == 0) {
-                        // set default size if no media is loaded
-                        var videoResolutions = document.getElementById('video-resolution').value.split(',');
-                        var videoWidth = parseInt(videoResolutions[0]);
-                        var videoHeight = parseInt(videoResolutions[1]);
-                        video.width = videoWidth;
-                        video.height = videoHeight;
-                    } else {
-                        video.width = video.videoWidth;
-                        video.height = video.videoHeight;
-                    }
-                }
+                /** @type {HTMLVideoElement} */
+                var video = document.getElementById('remote-video');
+                /** @type {HTMLDivElement} */
+                var videoBox = document.getElementById('video-box');
+                /** @type {HTMLDivElement} */
+                var screenBox = document.getElementById('screen-box');
+                
+                var videoResolutions = document.getElementById('video-resolution').value.split(',');
+                // valid area size
+                var videoWidth = parseInt(videoResolutions[0]);
+                var videoHeight = parseInt(videoResolutions[1]);
+                // video stream resolutoin; aligned 16 px
+                var videoStreamWidth = (video.videoWidth != 0) ? video.videoWidth : videoWidth;
+                var videoStreamHeight = (video.videoHeight != 0) ? video.videoHeight : videoHeight;
+
+                // screen area
+                var offsetWidth = document.fullscreenElement ? screenBox.offsetWidth : videoWidth;
+                var offsetHeight = document.fullscreenElement ? screenBox.offsetHeight : videoHeight;
+                
+                var videoZoom = Math.min(offsetWidth / videoWidth, offsetHeight / videoHeight);
+
+                videoBoxWidth = parseInt(videoWidth * videoZoom);
+                videoBoxHeight = parseInt(videoHeight * videoZoom);
+                    
+                videoBox.style.width = `${videoBoxWidth}px`;
+                videoBox.style.height = `${videoBoxHeight}px`;
+                videoBox.style.marginLeft = `${(offsetWidth - videoBoxWidth) / 2}px`;
+                videoBox.style.marginTop = `${(offsetHeight - videoBoxHeight) / 2}px`;
+                videoBox.style.clip = `rect(0px, ${videoBoxWidth}px, ${videoBoxHeight}px, 0px)`;
+
+                video.width = parseInt(videoStreamWidth * videoZoom);
+                video.height = parseInt(videoStreamHeight * videoZoom);
+                video.style.clip = `rect(0px, ${videoBoxWidth}px, ${videoBoxHeight}px, 0px)`;
             }
 
             window.addEventListener('fullscreenchange', onFullscreenChange);
@@ -582,6 +594,8 @@
                 var enableMouseAbsolute = document.getElementById('enable-mouse-absolute').checked;
                 var enableTouchScreen = document.getElementById('enable-touch-screen').checked;
 
+                if (!(enableMouse || enableMouseAbsolute || enableTouchScreen)) {return;}
+
                 if (enableMouse) {
                     var request = {
                         "type": "mouseEvent",
@@ -595,31 +609,29 @@
                     }
 
                     wsSend(JSON.stringify(request));
-                } else if (enableMouseAbsolute) {
-                    const reportMin = 0;
-                    const reportMax = 32767;
+                    return;
+                }
 
-                    /** @type {HTMLVideoElement} */
-                    var videoElement = document.getElementById('remote-video');
-                    var offsetWidth = videoElement.offsetWidth;
-                    var offsetHeight = videoElement.offsetHeight;
-                    var videoWidth = videoElement.videoWidth;
-                    var videoHeight = videoElement.videoHeight;
+                const reportMin = 0;
+                const reportMax = 32767;
 
-                    // width and height returns zero if no media is loaded
-                    if (videoWidth == 0 || videoHeight == 0) {return;}
+                /** @type {HTMLVideoElement} */
+                var videoElement = document.getElementById('remote-video');
+                /** @type {HTMLDivElement} */
+                var videoBox = document.getElementById('video-box');
+                var offsetWidth = videoBox.offsetWidth;
+                var offsetHeight = videoBox.offsetHeight;
 
-                    var videoZoom = Math.min(offsetWidth / videoWidth, offsetHeight / videoHeight);
+                // width and height returns zero if no media is loaded
+                if (videoElement.videoWidth == 0 || videoElement.videoHeight == 0) {return;}
 
-                    var offsetLeft = (offsetWidth - videoWidth * videoZoom) / 2;
-                    var offsetTop = (offsetHeight - videoHeight * videoZoom) / 2;
+                var x = Math.round(e.offsetX / (offsetWidth - 1) * reportMax);
+                var y = Math.round(e.offsetY / (offsetHeight - 1) * reportMax);
 
-                    var x = Math.round((e.offsetX - offsetLeft) / (videoWidth * videoZoom - 1) * reportMax);
-                    var y = Math.round((e.offsetY - offsetTop) / (videoHeight * videoZoom - 1) * reportMax);
+                if (x < reportMin || reportMax < x) {return;}
+                if (y < reportMin || reportMax < y) {return;}
 
-                    if (x < reportMin || reportMax < x) {return;}
-                    if (y < reportMin || reportMax < y) {return;}
-
+                if (enableMouseAbsolute) {
                     var request = {
                         "type": "mouseAbsEvent",
                         "payload": {
@@ -633,30 +645,6 @@
 
                     wsSend(JSON.stringify(request));
                 } else if (enableTouchScreen) {
-                    const reportMin = 0;
-                    const reportMax = 32767;
-
-                    /** @type {HTMLVideoElement} */
-                    var videoElement = document.getElementById('remote-video');
-                    var offsetWidth = videoElement.offsetWidth;
-                    var offsetHeight = videoElement.offsetHeight;
-                    var videoWidth = videoElement.videoWidth;
-                    var videoHeight = videoElement.videoHeight;
-
-                    // width and height returns zero if no media is loaded
-                    if (videoWidth == 0 || videoHeight == 0) {return;}
-
-                    var videoZoom = Math.min(offsetWidth / videoWidth, offsetHeight / videoHeight);
-
-                    var offsetLeft = (offsetWidth - videoWidth * videoZoom) / 2;
-                    var offsetTop = (offsetHeight - videoHeight * videoZoom) / 2;
-
-                    var x = Math.round((e.offsetX - offsetLeft) / (videoWidth * videoZoom - 1) * reportMax);
-                    var y = Math.round((e.offsetY - offsetTop) / (videoHeight * videoZoom - 1) * reportMax);
-
-                    if (x < reportMin || reportMax < x) {return;}
-                    if (y < reportMin || reportMax < y) {return;}
-
                     var request = {
                         "type": "touchEvent",
                         "payload": {
@@ -673,18 +661,27 @@
             }
         </script>
         <style>
-            .remote-video {
-                background-color: #000;
+            #video-box {
+                width: 1280px;
+                height: 720px;
+                margin-top: 0px;
+                margin-left: 0px;
+                clip: auto;
             }
-            .keyinput-box {
+            #remote-video {
+                background-color: #000;
+                position: absolute;
+                clip: auto;
+            }
+            #keyinput-box {
                 width: 0px;
                 height: 0px;
                 z-index: -1;
             }
-            .keyinput {
+            #keyinput {
                 opacity: 0;
             }
-            .status-text:disabled{
+            #status-text:disabled {
                 border: solid 1px #888;
                 background-color: #fff;
                 color: #000;
@@ -693,8 +690,8 @@
     </head>
     <body>
         <div id="screen-box">
-            <div class="keyinput-box">
-                <input type="text" id="keyinput" class="keyinput">
+            <div id="keyinput-box">
+                <input type="text" id="keyinput">
             </div>
             <div id="video-box">
                 <video id="remote-video" class="remote-video" width="1280" height="720">
@@ -705,7 +702,7 @@
         <div id="command-box">
             <button id="connect" onclick="connect();">connect</button>
             <button id="disconnect" onclick="disconnect();" disabled>disconnect</button>
-            Status: <input id="status-text" class="status-text" disabled>
+            Status: <input id="status-text" disabled>
             <button id="fullscreen" onclick="fullscreen();">fullscreen</button>
         </div>
         <details id="config-box">
