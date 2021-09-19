@@ -68,6 +68,7 @@ type USBGadgetFunction struct {
 	Type             string
 	Protocol         int
 	SubClass         int
+	NoOutEndpoint    bool
 	ReportLength     int
 	ReportDescriptor []byte
 }
@@ -311,6 +312,7 @@ func (g USBGadget) AddMouse(name string) *USBGadgetMouse {
 	f.Type = "hid"
 	f.Protocol = USB_PROTOCOL_MOUSE
 	f.SubClass = USB_SUBCLASS_BOOT_INTERFACE
+	f.NoOutEndpoint = true
 	f.ReportLength = 3
 	f.ReportDescriptor = []byte{
 		0x05, 0x01, // [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
@@ -359,6 +361,7 @@ func (g USBGadget) AddMouseAbsolute(name string) *USBGadgetMouseAbsolute {
 	f.Type = "hid"
 	f.Protocol = USB_PROTOCOL_NONE
 	f.SubClass = USB_SUBCLASS_NO_SUBCLASS
+	f.NoOutEndpoint = true
 	f.ReportLength = 6
 	f.ReportDescriptor = []byte{
 		0x05, 0x01, // [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
@@ -409,6 +412,7 @@ func (g USBGadget) AddTouchScreen(name string) *USBGadgetTouchScreen {
 	f.Type = "hid"
 	f.Protocol = USB_PROTOCOL_NONE
 	f.SubClass = USB_SUBCLASS_NO_SUBCLASS
+	f.NoOutEndpoint = true
 	f.ReportLength = 7
 	f.ReportDescriptor = []byte{
 		0x05, 0x0d, // [G] 05: Usage Page      (bSize = 1), 0d: Digitizers
@@ -475,6 +479,7 @@ func (g USBGadget) AddKeyboard(name string) *USBGadgetKeyboard {
 	f.Type = "hid"
 	f.Protocol = USB_PROTOCOL_KEYBOARD
 	f.SubClass = USB_SUBCLASS_BOOT_INTERFACE
+	f.NoOutEndpoint = true
 	f.ReportLength = 8
 	f.ReportDescriptor = []byte{
 		0x05, 0x01, // [G] 05: Usage Page      (bSize = 1), 01: Generic Desktop
@@ -495,17 +500,6 @@ func (g USBGadget) AddKeyboard(name string) *USBGadgetKeyboard {
 		0x75, 0x08, // [G] 75: Report Size     (bsize = 1), 08: 8bits/field
 		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 01: 1 fields
 		0x81, 0x01, // [M] 81: Input           (bSize = 1), 01: Constant (for padding)
-
-		// Output: LED status, 1 byte (1 bit/field * 5 fields + padding)
-		0x05, 0x08, // [G] 05: Usage Page      (bSize = 1), 08: LED
-		0x19, 0x01, // [L] 19: Usage Minimum   (bSize = 1), 01: Num Lock (in LED Page)
-		0x29, 0x05, // [L] 29: Usage Maximum   (bSize = 1), 05: Kana     (in LED Page)
-		0x75, 0x01, // [G] 75: Report Size     (bSize = 1), 01: 1 bits/field
-		0x95, 0x05, // [G] 95: Report Count    (bSize = 1), 01: 5 fields
-		0x91, 0x02, // [M] 91: Output          (bSize = 1), 02: Variable, Data, Absoute
-		0x75, 0x03, // [G] 75: Report Size     (bsize = 1), 03: 3 bits/field
-		0x95, 0x01, // [G] 95: Report Count    (bSize = 1), 01: 1 fields
-		0x91, 0x01, // [M] 91: Output          (bSize = 1), 01: Constant (for padding)
 
 		// Input: selected keys, 6 byte (8 bits/field * 6 fields)
 		0x05, 0x07, // [G] 05: Usage Page      (bSize = 1), 07: Keyboard/Keypad
@@ -533,6 +527,7 @@ func (g USBGadget) AddGamePad(name string) *USBGadgetGamePad {
 	f.Type = "hid"
 	f.Protocol = USB_PROTOCOL_NONE
 	f.SubClass = USB_SUBCLASS_NO_SUBCLASS
+	f.NoOutEndpoint = true
 	f.ReportLength = 7
 	f.ReportDescriptor = []byte{
 		0x05, 0x01, // [G] 05: Usage Page       (bSize = 1), 01: Generic Desktop
@@ -639,6 +634,11 @@ func (g USBGadget) Start() {
 		ioutil.WriteFile(functionDir+"/subclass", []byte(strconv.Itoa(f.SubClass)), 0644)
 		ioutil.WriteFile(functionDir+"/report_length", []byte(strconv.Itoa(f.ReportLength)), 0644)
 		ioutil.WriteFile(functionDir+"/report_desc", f.ReportDescriptor, 0644)
+
+		// use no_out_endpoint option if supported
+		if _, err := os.Stat(functionDir + "/no_out_endpoint"); err == nil && f.NoOutEndpoint == true {
+			ioutil.WriteFile(functionDir+"/no_out_endpoint", []byte("1"), 0644)
+		}
 
 		os.Symlink(functionDir, configDir+fmt.Sprintf("/%s.%s", f.Type, n))
 	}
