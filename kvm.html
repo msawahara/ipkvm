@@ -515,7 +515,7 @@
                 var keyinput = document.getElementById('keyinput');
                 video.addEventListener("click", () => {keyinput.focus();});
                 video.addEventListener("contextmenu", (e) => {e.preventDefault();})
-                video.addEventListener("mousedown", onMouseEvent);
+                video.addEventListener("mousedown", onMouseDown);
                 video.addEventListener("mouseup", onMouseEvent);
                 video.addEventListener("mousemove", onMouseEvent);
                 video.addEventListener("loadedmetadata", onLoadedMetadata);
@@ -589,6 +589,19 @@
             /**
              * @param {MouseEvent} e
              */
+            function onMouseDown(e) {
+                var enableMouse = document.getElementById('enable-mouse').checked;
+                if (enableMouse) {
+                    // if using a relative mode mouse, use Pointer Lock API.
+                    document.getElementById("remote-video").requestPointerLock();
+                }
+
+                onMouseEvent(e)
+            }
+
+            /**
+             * @param {MouseEvent} e
+             */
             function onMouseEvent(e) {
                 var enableMouse = document.getElementById('enable-mouse').checked;
                 var enableMouseAbsolute = document.getElementById('enable-mouse-absolute').checked;
@@ -602,8 +615,8 @@
                         "payload": {
                             "buttons": e.buttons,
                             "pos": {
-                                "x": e.offsetX,
-                                "y": e.offsetY,
+                                "x": e.movementX,
+                                "y": e.movementY,
                             }
                         }
                     }

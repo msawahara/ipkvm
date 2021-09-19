@@ -43,8 +43,6 @@ type USBGadgetDevice struct {
 }
 
 type USBGadgetMouse struct {
-	X      int
-	Y      int
 	Device USBGadgetDevice
 }
 
@@ -181,11 +179,8 @@ func (m *USBGadgetMouse) Send(buttons, x, y int) error {
 		return err
 	}
 
-	dx := int8(math.Max(math.Min(float64(x-m.X), 127), -127))
-	dy := int8(math.Max(math.Min(float64(y-m.Y), 127), -127))
-
-	m.X = x
-	m.Y = y
+	dx := int8(math.Max(math.Min(float64(x), 127), -127))
+	dy := int8(math.Max(math.Min(float64(y), 127), -127))
 
 	report := make([]byte, 3)
 	report[0] = byte(buttons & 0x07)
