@@ -3,6 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
+	"io"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -13,7 +20,27 @@ import (
 	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"
 	"golang.org/x/net/websocket"
+	"gopkg.in/yaml.v2"
 )
+
+type ConfigCommand struct {
+	Name    string `yaml:"name"`
+	Command string `yaml:"command"`
+}
+
+type Config struct {
+	ListenAddress string   `yaml:"listenAddress"`
+	IceServers    []string `yaml:"iceServers"`
+	Default       struct {
+		RemoteVideo   bool `yaml:"remoteVideo"`
+		RelativeMouse bool `yaml:"relativeMouse"`
+		AbsoluteMouse bool `yaml:"absoluteMouse"`
+		TouchScreen   bool `yaml:"touchScreen"`
+		Keyboard      bool `yaml:"keyboard"`
+		Gamepad       bool `yaml:"gamepad"`
+	} `yaml:"default"`
+	Commands []ConfigCommand `yaml:"commands"`
+}
 
 type KeyboardEvent struct {
 	Code     []int `json:"code"`
@@ -37,6 +64,10 @@ type TouchEvent MouseEvent
 type GamepadEvent struct {
 	Buttons []bool    `json:"buttons"`
 	Axes    []float64 `json:"axes"`
+}
+
+type RunCommandRequest struct {
+	Index int `json:"index"`
 }
 
 type VideoRequest struct {
@@ -79,6 +110,8 @@ type KVMContext struct {
 	AudioTrack  *TrackContext
 	VideoTrack  *TrackContext
 }
+
+var config Config
 
 func sendOffer(ws *websocket.Conn, offer webrtc.SessionDescription) error {
 	offerJson, err := json.Marshal(offer)
@@ -166,7 +199,7 @@ func initWebRTC(c *KVMContext, v VideoRequest) {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
-				URLs: []string{"stun:stun.l.google.com:19302"},
+				URLs: config.IceServers,
 			},
 		},
 	}
@@ -232,6 +265,22 @@ func initWebRTC(c *KVMContext, v VideoRequest) {
 	offer, _ := c.PC.CreateOffer(nil)
 	c.PC.SetLocalDescription(offer)
 	sendOffer(c.WS, offer)
+}
+
+func runCommand(c *KVMContext, wsReq WSRequest) {
+	var r RunCommandRequest
+	json.Unmarshal(wsReq.Payload, &r)
+
+	if r.Index < 0 || r.Index >= len(config.Commands) {
+		c.Echo.Logger().Error("invalid command index: " + strconv.Itoa(r.Index))
+		return
+	}
+
+	c.Echo.Logger().Info("run command: " + config.Commands[r.Index].Command)
+	err := exec.Command("sh", "-c", config.Commands[r.Index].Command).Run()
+	if err != nil {
+		c.Echo.Logger().Error(err)
+	}
 }
 
 func onInitRequest(c *KVMContext, wsReq WSRequest) {
@@ -381,6 +430,8 @@ func wsHandler(ws *websocket.Conn, e echo.Context) {
 			onReceiveAnswer(c, req)
 		case "addIceCandidate":
 			addIceCandidate(c, req)
+		case "runCommand":
+			runCommand(c, req)
 		case "keepAlive":
 			// NOP
 		default:
@@ -394,11 +445,42 @@ func wsEndpoint(c echo.Context) error {
 	return nil
 }
 
+func loadConfig(filename string) error {
+	buf, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	err = yaml.Unmarshal(buf, &config)
+	return err
+}
+
+type Template struct {
+	templates *template.Template
+}
+
+func (t *Template) Render(w io.Writer, name string, data interface{}, c echo.Context) error {
+	return t.templates.ExecuteTemplate(w, name, data)
+}
+
 func main() {
+	err := loadConfig("config.yaml")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	t := &Template{
+		templates: template.Must(template.ParseGlob("templates/*.html")),
+	}
+
 	e := echo.New()
+	e.Renderer = t
 	e.Logger.SetLevel(log.INFO)
 	e.Use(middleware.Logger())
 	e.GET("/api/ws", wsEndpoint)
-	e.File("/", "kvm.html")
-	e.Logger.Fatal(e.Start(":1323"))
+	e.GET("/", func(c echo.Context) error {
+		return c.Render(http.StatusOK, "kvm", config)
+	})
+	e.Logger.Fatal(e.Start(config.ListenAddress))
 }

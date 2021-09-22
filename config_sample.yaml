@@ -1,0 +1,13 @@
+listenAddress: :1323
+iceServers:
+  - stun:stun.l.google.com:19302
+default:
+  remoteVideo: true
+  relativeMouse: true
+  absoluteMouse: false
+  touchScreen: false
+  keyboard: true
+  gamepad: false
+commands:
+  - name: Send WoL magic packet
+    command: sudo ether-wake 00:00:5E:00:53:AA

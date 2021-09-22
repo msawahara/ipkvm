@@ -1,3 +1,4 @@
+{{ define "kvm" }}
 <!DOCTYPE html>
 <html>
     <head>
@@ -440,6 +441,18 @@
                 document.getElementById('screen-box').requestFullscreen();
             }
 
+            function run() {
+                /** @type {HTMLSelectElement} */
+                var select = document.getElementById('command-list');
+                var request = {
+                    "type": "runCommand",
+                    "payload": {
+                        "index": select.selectedIndex,
+                    }
+                }
+                wsSend(JSON.stringify(request));
+            }
+
             /** @param {boolean} lock */
             function configLock(lock) {
                 formLockInChildren(document.getElementById('config-items'), lock);
@@ -712,22 +725,35 @@
                 </video>
             </div>
         </div>
-        <div id="command-box">
+        <div id="control-box">
             <button id="connect" onclick="connect();">connect</button>
             <button id="disconnect" onclick="disconnect();" disabled>disconnect</button>
             Status: <input id="status-text" disabled>
             <button id="fullscreen" onclick="fullscreen();">fullscreen</button>
         </div>
+        {{ if .Commands }}
+        <details id="command-box">
+            <summary>command</summary>
+            <fieldset>
+                <select id="command-list">
+                    {{ range .Commands }}
+                    <option>{{ .Name }}</option>
+                    {{ end }}
+                </select>
+                <button id="command-run" onclick="run();">run</button>
+            </fieldset>
+        </details>
+        {{ end }}
         <details id="config-box">
             <summary>configuration</summary>
             <fieldset>
                 <div id="config-items">
-                    <input type="checkbox" id="enable-remote-video" checked> remote-video (with audio)<br>
-                    <input type="checkbox" id="enable-mouse"> mouse (relative pos., for BIOS)<br>
-                    <input type="checkbox" id="enable-mouse-absolute" checked> mouse (absolute pos.)<br>
-                    <input type="checkbox" id="enable-touch-screen"> touch screen<br>
-                    <input type="checkbox" id="enable-keyboard" checked> keyboard<br>
-                    <input type="checkbox" id="enable-gamepad"> gamepad<br>
+                    <input type="checkbox" id="enable-remote-video"{{ if .Default.RemoteVideo }} checked{{ end }}> remote-video (with audio)<br>
+                    <input type="checkbox" id="enable-mouse"{{ if .Default.RelativeMouse }} checked{{ end }}> mouse (relative pos., for BIOS)<br>
+                    <input type="checkbox" id="enable-mouse-absolute"{{ if .Default.AbsoluteMouse }} checked{{ end }}> mouse (absolute pos.)<br>
+                    <input type="checkbox" id="enable-touch-screen"{{ if .Default.TouchScreen }} checked{{ end }}> touch screen<br>
+                    <input type="checkbox" id="enable-keyboard"{{ if .Default.Keyboard }} checked{{ end }}> keyboard<br>
+                    <input type="checkbox" id="enable-gamepad"{{ if .Default.Gamepad }} checked{{ end }}> gamepad<br>
                     <select id="video-resolution">
                         <option value="1920,1080,30">(16:9) 1920 x 1080, 30 fps</option>
                         <option value="1280,720,60">(16:9) 1280 x 720, 60 fps</option>
@@ -753,3 +779,4 @@
         </details>
     </body>
 </html>
+{{ end }}
