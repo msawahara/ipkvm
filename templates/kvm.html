@@ -420,6 +420,7 @@
                 if (ms) {
                     for (var track of ms.getTracks()) {
                         ms.removeTrack(track);
+                        track.stop()
                     }
                     document.getElementById('remote-video').pause();
                     document.getElementById('remote-video').srcObject = null;
